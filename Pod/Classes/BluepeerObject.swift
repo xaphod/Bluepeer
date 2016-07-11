@@ -10,6 +10,7 @@ import Foundation
 import CoreBluetooth
 import CFNetwork
 
+
 // NOTE: requires pod CocoaAsyncSocket
 
 @objc public enum RoleType: Int, CustomStringConvertible {
