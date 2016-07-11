@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<document type="com.apple.InterfaceBuilder3.CocoaTouch.Storyboard.XIB" version="3.0" toolsVersion="10117" systemVersion="15F34" targetRuntime="iOS.CocoaTouch" propertyAccessControl="none" useAutolayout="YES" useTraitCollections="YES" initialViewController="YOx-Kx-sq2">
+    <dependencies>
+        <deployment identifier="iOS"/>
+        <plugIn identifier="com.apple.InterfaceBuilder.IBCocoaTouchPlugin" version="10085"/>
+    </dependencies>
+    <customFonts key="customFonts">
+        <mutableArray key="OpenSans-Regular.ttf">
+            <string>OpenSans</string>
+        </mutableArray>
+    </customFonts>
+    <scenes>
+        <!--Bluepeer Browser View Controller-->
+        <scene sceneID="4Zg-z6-XTg">
+            <objects>
+                <tableViewController id="eDh-Ny-Qwh" customClass="BluepeerBrowserViewController" customModule="Photobooth" customModuleProvider="target" sceneMemberID="viewController">
+                    <tableView key="view" clipsSubviews="YES" contentMode="scaleToFill" alwaysBounceVertical="YES" dataMode="prototypes" style="plain" separatorStyle="default" rowHeight="44" sectionHeaderHeight="28" sectionFooterHeight="28" id="1XZ-XB-Ye0">
+                        <rect key="frame" x="0.0" y="0.0" width="600" height="600"/>
+                        <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
+                        <color key="backgroundColor" white="1" alpha="1" colorSpace="calibratedWhite"/>
+                        <prototypes>
+                            <tableViewCell clipsSubviews="YES" contentMode="scaleToFill" selectionStyle="default" indentationWidth="10" reuseIdentifier="peerRow" id="ul1-0i-6Jk" customClass="BluepeerRowTableViewCell" customModule="Photobooth" customModuleProvider="target">
+                                <rect key="frame" x="0.0" y="92" width="600" height="44"/>
+                                <autoresizingMask key="autoresizingMask"/>
+                                <tableViewCellContentView key="contentView" opaque="NO" clipsSubviews="YES" multipleTouchEnabled="YES" contentMode="center" tableViewCell="ul1-0i-6Jk" id="btx-cJ-lfd">
+                                    <rect key="frame" x="0.0" y="0.0" width="600" height="43.5"/>
+                                    <autoresizingMask key="autoresizingMask"/>
+                                    <subviews>
+                                        <label opaque="NO" userInteractionEnabled="NO" contentMode="left" horizontalHuggingPriority="251" verticalHuggingPriority="251" text="peerRow Label" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="NO" translatesAutoresizingMaskIntoConstraints="NO" id="OFS-cM-rAc">
+                                            <rect key="frame" x="8" y="10" width="584" height="23.5"/>
+                                            <fontDescription key="fontDescription" name="OpenSans" family="Open Sans" pointSize="17"/>
+                                            <color key="textColor" red="0.0" green="0.0" blue="0.0" alpha="1" colorSpace="calibratedRGB"/>
+                                            <nil key="highlightedColor"/>
+                                        </label>
+                                    </subviews>
+                                    <constraints>
+                                        <constraint firstItem="OFS-cM-rAc" firstAttribute="leading" secondItem="btx-cJ-lfd" secondAttribute="leading" constant="8" id="Bxm-ML-r5l"/>
+                                        <constraint firstItem="OFS-cM-rAc" firstAttribute="centerY" secondItem="btx-cJ-lfd" secondAttribute="centerY" id="KGJ-UQ-yrC"/>
+                                        <constraint firstAttribute="trailing" secondItem="OFS-cM-rAc" secondAttribute="trailing" constant="8" id="mpM-n9-Ncw"/>
+                                    </constraints>
+                                </tableViewCellContentView>
+                                <connections>
+                                    <outlet property="mainLabel" destination="OFS-cM-rAc" id="zyW-gz-EBy"/>
+                                </connections>
+                            </tableViewCell>
+                        </prototypes>
+                        <connections>
+                            <outlet property="dataSource" destination="eDh-Ny-Qwh" id="0qN-dZ-K77"/>
+                            <outlet property="delegate" destination="eDh-Ny-Qwh" id="zIW-rr-K12"/>
+                        </connections>
+                    </tableView>
+                    <navigationItem key="navigationItem" id="Lbz-1G-ond"/>
+                </tableViewController>
+                <placeholder placeholderIdentifier="IBFirstResponder" id="28z-zE-gDf" userLabel="First Responder" sceneMemberID="firstResponder"/>
+            </objects>
+            <point key="canvasLocation" x="1608" y="54"/>
+        </scene>
+        <!--Navigation Controller-->
+        <scene sceneID="LxE-7b-Ezm">
+            <objects>
+                <navigationController automaticallyAdjustsScrollViewInsets="NO" id="YOx-Kx-sq2" sceneMemberID="viewController">
+                    <toolbarItems/>
+                    <navigationBar key="navigationBar" contentMode="scaleToFill" id="laE-ua-FuD">
+                        <rect key="frame" x="0.0" y="0.0" width="320" height="44"/>
+                        <autoresizingMask key="autoresizingMask"/>
+                    </navigationBar>
+                    <nil name="viewControllers"/>
+                    <connections>
+                        <segue destination="eDh-Ny-Qwh" kind="relationship" relationship="rootViewController" id="GZq-Pg-FMe"/>
+                    </connections>
+                </navigationController>
+                <placeholder placeholderIdentifier="IBFirstResponder" id="axG-le-j5a" userLabel="First Responder" sceneMemberID="firstResponder"/>
+            </objects>
+            <point key="canvasLocation" x="796" y="54"/>
+        </scene>
+    </scenes>
+</document>
