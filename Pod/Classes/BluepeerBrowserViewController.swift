@@ -128,6 +128,6 @@ extension BluepeerBrowserViewController: BluepeerSessionManagerDelegate {
         if let index = self.peers.indexOf({$0.0 == peer}) {
             self.peers.removeAtIndex(index)
             self.tableView.reloadData()
-        } 
+        }
     }
 }

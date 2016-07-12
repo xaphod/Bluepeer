@@ -68,11 +68,11 @@ import HHServices
 }
 
 @objc public class BPPeer: NSObject {
-    public var displayName: String = "Unknown"
-    public var socket: GCDAsyncSocket? // has IP at .userData or .connectedHost
+    public var displayName: String = ""
+    public var socket: GCDAsyncSocket?
     public var role: RoleType = .Unknown
     public var state: BPPeerState = .NotConnected
-    public var IP: String = "0.0.0.0"
+    public var IP: String = ""
     override public func isEqual(object: AnyObject?) -> Bool {
         if let rhs = object as? BPPeer {
             return self.IP == rhs.IP
@@ -115,6 +115,23 @@ import HHServices
     var serverPort: UInt16 = 0
     var versionString: String = "unknown"
     var displayName: String = UIDevice.currentDevice().name
+    var sanitizedDisplayName: String {
+        // sanitize name
+        var retval = self.displayName.lowercaseString
+        if retval.characters.count > 15 {
+            retval = retval.substringToIndex(retval.startIndex.advancedBy(15))
+        }
+        let acceptableChars = NSCharacterSet.init(charactersInString: "abcdefghijklmnopqrstuvwxyz1234567890-")
+        retval = String(retval.characters.map { (char: Character) in
+            if acceptableChars.containsCharacter(char) == false {
+                return "-"
+            } else {
+                return char
+            }
+        })
+        return retval
+    }
+    
     weak public var sessionDelegate: BluepeerSessionManagerDelegate?
     weak public var dataDelegate: BluepeerDataDelegate?
     public var peers = Set<BPPeer>()
@@ -132,12 +149,14 @@ import HHServices
         }
     }
     let headerTerminator: NSData = "\r\n\r\n".dataUsingEncoding(NSUTF8StringEncoding)! // same as HTTP. But header content here is just a number, representing the byte count of the incoming nsdata.
+    let socketQueue = dispatch_queue_create("xaphod.bluepeer.socketQueue", nil)
     
     enum DataTag: Int {
         case TAG_HEADER = 1
         case TAG_BODY = 2
         case TAG_WRITING = 3
         case TAG_AUTH = 4
+        case TAG_NAME = 5
     }
     
     // if queue isn't given, main queue is used
@@ -151,23 +170,9 @@ import HHServices
         super.init()
 
         if let name = displayName {
-            self.displayName = name
+            self.displayName = name.stringByTrimmingCharactersInSet(NSCharacterSet.whitespaceAndNewlineCharacterSet())
         }
 
-        // sanitize name
-        self.displayName = self.displayName.lowercaseString
-        if self.displayName.characters.count > 15 {
-            self.displayName = self.displayName.substringToIndex(self.displayName.startIndex.advancedBy(15))
-        }
-        let acceptableChars = NSCharacterSet.init(charactersInString: "abcdefghijklmnopqrstuvwxyz1234567890-")
-        self.displayName = String(self.displayName.characters.map { (char: Character) in
-            if acceptableChars.containsCharacter(char) == false {
-                return "-"
-            } else {
-                return char
-            }
-        })
-        
         if let bundleVersionString = NSBundle.mainBundle().infoDictionary?["CFBundleVersion"] as? String {
             versionString = bundleVersionString
         }
@@ -225,7 +230,7 @@ import HHServices
             NSLog("BluepeerObject: ERROR could not create TXTDATA nsdata")
             return
         }
-        self.publisher = HHServicePublisher.init(name: self.displayName, type: self.serviceType, domain: "local.", txtData: txtdata, port: UInt(serverPort), includeP2P: true)
+        self.publisher = HHServicePublisher.init(name: self.sanitizedDisplayName, type: self.serviceType, domain: "local.", txtData: txtdata, port: UInt(serverPort), includeP2P: true)
         
         guard let publisher = self.publisher else {
             NSLog("BluepeerObject: could not create publisher")
@@ -366,6 +371,20 @@ import HHServices
     }
 }
 
+extension GCDAsyncSocket {
+    var peer: BPPeer? {
+        guard let bo = self.delegate as? BluepeerObject else {
+            assert(false, "BluepeerObject: socket does not have delegate set to bluepeerObject");
+            return nil
+        }
+        guard let peer = bo.peers.filter({ $0.socket == self }).first else {
+            assert(false, "BluepeerObject: programming error, expected to find a peer")
+            return nil
+        }
+        return peer
+    }
+}
+
 extension BluepeerObject : HHServicePublisherDelegate {
     public func serviceDidPublish(servicePublisher: HHServicePublisher!) {
         self.advertising = true
@@ -377,7 +396,7 @@ extension BluepeerObject : HHServicePublisherDelegate {
             self.serverSocket = nil
         }
         
-        self.serverSocket = GCDAsyncSocket.init(delegate: self, delegateQueue: self.delegateQueue ?? dispatch_get_main_queue())
+        self.serverSocket = GCDAsyncSocket.init(delegate: self, delegateQueue: socketQueue)
         guard let serverSocket = self.serverSocket else {
             NSLog("BluepeerObject: ERROR - Could not create serverSocket")
             return
@@ -513,8 +532,7 @@ extension BluepeerObject : HHServiceDelegate {
                 if connect {
                     do {
                         NSLog("... trying to connect...")
-                        newPeer.socket = GCDAsyncSocket.init(delegate: self, delegateQueue: self.delegateQueue ?? dispatch_get_main_queue())
-                        newPeer.socket?.userData = addressStr // save the IP in the socket userdata for correlation later
+                        newPeer.socket = GCDAsyncSocket.init(delegate: self, delegateQueue: self.socketQueue)
                         newPeer.state = .Connecting
                         try newPeer.socket?.connectToHost(addressStr, onPort: port.unsignedShortValue, withTimeout: timeoutForInvite)
                     } catch {
@@ -555,68 +573,60 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
                 return
             }
             NSLog("BluepeerObject: accepting new connection from \(newSocket.connectedHost)")
+            newSocket.delegate = self
             let newPeer = BPPeer.init()
             newPeer.state = .AwaitingAuth
             newPeer.role = .Client
             newPeer.IP = connectedHost
+            newPeer.socket = newSocket
             self.addPeer(newPeer)
-
-            self.dispatch_on_delegate_queue({
-                delegate.peerConnectionRequest!(newPeer, invitationHandler: { (inviteAccepted) in
-                    if inviteAccepted {
-                        newSocket.delegate = self
-                        newPeer.socket = newSocket
-                        newSocket.userData = newSocket.connectedHost // so that we can always use userData as the IP/host in the rest of the code
-                        newPeer.state = .Connected
-                        var zero = UInt8(0) // CONVENTION: send a single 0 to show connection has been accepted, since it isn't possible to send a header for a payload of size zero except here.
-                        newSocket.writeData(NSData.init(bytes: &zero, length: 1), withTimeout: -1, tag: DataTag.TAG_WRITING.rawValue)
-                        NSLog("... accepted (by my delegate)")
-                        self.dispatch_on_delegate_queue({
-                            self.sessionDelegate?.peerDidConnect!(.Client, peer: newPeer)
-                        })
-                        newSocket.readDataToData(self.headerTerminator, withTimeout: -1, tag: DataTag.TAG_HEADER.rawValue)
-                    } else {
-                        newPeer.state = .NotConnected
-                        newSocket.delegate = nil
-                        newSocket.disconnect()
-                        NSLog("... rejected (by my delegate)")
-                    }
-                })
-            })
+            
+            // CONVENTION: CLIENT sends SERVER 32 bytes of its name -- UTF-8 string
+            newSocket.readDataToLength(32, withTimeout: -1, tag: DataTag.TAG_NAME.rawValue)
         } else {
             NSLog("BluepeerObject: WARNING, ignoring connection attempt because I don't have a sessionDelegate assigned")
         }
     }
     
     public func socket(sock: GCDAsyncSocket, didConnectToHost host: String, port: UInt16) {
-        guard let sockUserdata = sock.userData as? String else {
-            assert(false, "BluepeerObject: programming error, expected socket.userData to be set!")
-            return
-        }
-        guard let peer = self.peers.filter( { $0.IP == sockUserdata }).first else {
+        guard let peer = sock.peer else {
             assert(false, "BluepeerObject: programming error, expected to find a peer already in didConnectToHost")
             return
         }
         peer.state = .AwaitingAuth
-        NSLog("BluepeerObject: got to state = awaitingAuth with \(sock.connectedHost), awaiting ACK ('0')")
+        NSLog("BluepeerObject: got to state = awaitingAuth with \(sock.connectedHost), sending name then awaiting ACK ('0')")
+        
+        // make 32-byte UTF-8 name
+        var strData = NSMutableData.init(capacity: 32)
+        for c in self.displayName.characters {
+            if let thisData = String.init(c).dataUsingEncoding(NSUTF8StringEncoding) {
+                if thisData.length + (strData?.length)! < 32 {
+                    strData?.appendData(thisData)
+                } else {
+                    NSLog("BluepeerObject: max displayName length reached, truncating")
+                    break
+                }
+            }
+        }
+        // pad to 32 bytes!
+        var paddedStrData: NSMutableData = "                                ".dataUsingEncoding(NSUTF8StringEncoding)?.mutableCopy() as! NSMutableData // that's 32 spaces :)
+        paddedStrData.replaceBytesInRange(NSMakeRange(0, strData!.length), withBytes: (strData?.bytes)!)
+        sock.writeData(paddedStrData, withTimeout: -1, tag: DataTag.TAG_WRITING.rawValue)
+        
+        // now await auth
         sock.readDataToLength(1, withTimeout: -1, tag: DataTag.TAG_AUTH.rawValue)
     }
     
     public func socketDidDisconnect(sock: GCDAsyncSocket, withError err: NSError?) {
-        guard let socketUserdata = sock.userData as? String else {
-            assert(false, "BluepeerObject: ERROR, expected socket.userData in socketDidDisconnect")
-            return
-        }
-        guard let peer = self.peers.filter( { $0.IP == socketUserdata }).first else {
-            assert(false, "BluepeerObject: programming error, expected to find a peer already in didDisconnect")
+        guard let peer = sock.peer else {
+            assert(false, "BluepeerObject: programming error, expected to find a peer in didDisconnect")
             return
         }
         let oldState = peer.state
         peer.state = .NotConnected
         peer.socket = nil
-        sock.userData = nil
         sock.delegate = nil
-        NSLog("BluepeerObject: \(socketUserdata) disconnected")
+        NSLog("BluepeerObject: \(peer.displayName) @ \(peer.IP) disconnected")
         switch oldState {
         case .Connected:
             self.dispatch_on_delegate_queue({
@@ -626,18 +636,14 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             assert(false, "ERROR: state is being tracked wrong")
         case .Connecting, .AwaitingAuth:
             self.dispatch_on_delegate_queue({
-                self.sessionDelegate?.peerConnectionAttemptFailed!(peer.role, peer: peer, isAuthRejection: oldState == .AwaitingAuth)
+                self.sessionDelegate?.peerConnectionAttemptFailed?(peer.role, peer: peer, isAuthRejection: oldState == .AwaitingAuth)
             })
         }
     }
     
     public func socket(sock: GCDAsyncSocket, didReadData data: NSData, withTag tag: Int) {
-        guard let sockUserdata = sock.userData as? String else {
-            assert(false, "Error, expect all sockets to have userdata set")
-            return
-        }
-        guard let peer = self.peers.filter( { $0.IP == sockUserdata }).first else {
-            assert(false, "Error, I should know peers i receive data from!")
+        guard let peer = sock.peer else {
+            assert(false, "BluepeerObject: programming error, expected to find a peer in didReadData")
             return
         }
 
@@ -659,6 +665,37 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             dataWithoutTerminator.getBytes(&length, length: sizeof(UInt))
             NSLog("BluepeerObject: got header, reading %lu bytes...", length)
             sock.readDataToLength(length, withTimeout: -1, tag: DataTag.TAG_BODY.rawValue)
+        } else if tag == DataTag.TAG_NAME.rawValue {
+            
+            var name = String.init(data: data, encoding: NSUTF8StringEncoding)
+            if name == nil {
+                name = "Unknown"
+            }
+            name = name?.stringByTrimmingCharactersInSet(NSCharacterSet.whitespaceAndNewlineCharacterSet())
+            peer.displayName = name!
+
+            if let delegate = self.sessionDelegate {
+                self.dispatch_on_delegate_queue({
+                    delegate.peerConnectionRequest!(peer, invitationHandler: { (inviteAccepted) in
+                        if inviteAccepted {
+                            peer.state = .Connected
+                            var zero = UInt8(0) // CONVENTION: SERVER sends CLIENT a single 0 to show connection has been accepted, since it isn't possible to send a header for a payload of size zero except here.
+                            sock.writeData(NSData.init(bytes: &zero, length: 1), withTimeout: -1, tag: DataTag.TAG_WRITING.rawValue)
+                            NSLog("... accepted (by my delegate)")
+                            self.dispatch_on_delegate_queue({
+                                self.sessionDelegate?.peerDidConnect!(.Client, peer: peer)
+                            })
+                            sock.readDataToData(self.headerTerminator, withTimeout: -1, tag: DataTag.TAG_HEADER.rawValue)
+                        } else {
+                            peer.state = .NotConnected
+                            sock.delegate = nil
+                            sock.disconnect()
+                            peer.socket = nil
+                            NSLog("... rejected (by my delegate)")
+                        }
+                    })
+                })
+            }
         } else {
             self.dispatch_on_delegate_queue({
                 self.dataDelegate?.didReceiveData(data, fromPeer: peer)

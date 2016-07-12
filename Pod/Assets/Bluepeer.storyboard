@@ -28,16 +28,16 @@
                                     <autoresizingMask key="autoresizingMask"/>
                                     <subviews>
                                         <label opaque="NO" userInteractionEnabled="NO" contentMode="left" horizontalHuggingPriority="251" verticalHuggingPriority="251" text="peerRow Label" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="NO" translatesAutoresizingMaskIntoConstraints="NO" id="OFS-cM-rAc">
-                                            <rect key="frame" x="8" y="12" width="584" height="20"/>
+                                            <rect key="frame" x="16" y="12" width="568" height="20"/>
                                             <fontDescription key="fontDescription" name="OpenSans" family="Open Sans" pointSize="17"/>
                                             <color key="textColor" red="0.0" green="0.0" blue="0.0" alpha="1" colorSpace="calibratedRGB"/>
                                             <nil key="highlightedColor"/>
                                         </label>
                                     </subviews>
                                     <constraints>
-                                        <constraint firstItem="OFS-cM-rAc" firstAttribute="leading" secondItem="btx-cJ-lfd" secondAttribute="leading" constant="8" id="Bxm-ML-r5l"/>
+                                        <constraint firstItem="OFS-cM-rAc" firstAttribute="leading" secondItem="btx-cJ-lfd" secondAttribute="leading" constant="16" id="Bxm-ML-r5l"/>
                                         <constraint firstItem="OFS-cM-rAc" firstAttribute="centerY" secondItem="btx-cJ-lfd" secondAttribute="centerY" id="KGJ-UQ-yrC"/>
-                                        <constraint firstAttribute="trailing" secondItem="OFS-cM-rAc" secondAttribute="trailing" constant="8" id="mpM-n9-Ncw"/>
+                                        <constraint firstAttribute="trailing" secondItem="OFS-cM-rAc" secondAttribute="trailing" constant="16" id="mpM-n9-Ncw"/>
                                     </constraints>
                                 </tableViewCellContentView>
                                 <connections>
