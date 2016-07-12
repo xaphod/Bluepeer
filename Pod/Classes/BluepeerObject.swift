@@ -54,13 +54,15 @@ import HHServices
 @objc public enum BPPeerState: Int, CustomStringConvertible {
     case NotConnected = 0
     case Connecting = 1
-    case Connected = 2
+    case AwaitingAuth = 2
+    case Connected = 3
     
     public var description: String {
         switch self {
         case .NotConnected: return "NotConnected"
         case .Connecting: return "Connecting"
         case .Connected: return "Connected"
+        case .AwaitingAuth: return "AwaitingAuth"
         }
     }
 }
@@ -70,12 +72,27 @@ import HHServices
     public var socket: GCDAsyncSocket? // has IP at .userData or .connectedHost
     public var role: RoleType = .Unknown
     public var state: BPPeerState = .NotConnected
+    public var IP: String = "0.0.0.0"
+    override public func isEqual(object: AnyObject?) -> Bool {
+        if let rhs = object as? BPPeer {
+            return self.IP == rhs.IP
+        } else {
+            return false
+        }
+    }
+    override public var hash: Int {
+        return self.IP.hash
+//        let acceptableChars = NSCharacterSet.init(charactersInString: "1234567890")
+//        var str = "1" + IP
+//        str = String(str.characters.filter { acceptableChars.containsCharacter($0) })
+//        return Int.init(str)!
+    }
 }
 
 @objc public protocol BluepeerSessionManagerDelegate {
     optional func peerDidConnect(peerRole: RoleType, peer: BPPeer)
     optional func peerDidDisconnect(peerRole: RoleType, peer: BPPeer)
-    optional func peerConnectionAttemptFailed(peerRole: RoleType, peer: BPPeer)
+    optional func peerConnectionAttemptFailed(peerRole: RoleType, peer: BPPeer, isAuthRejection: Bool)
     optional func peerConnectionRequest(peer: BPPeer, invitationHandler: (Bool) -> Void) // was named: sessionConnectionRequest
     optional func browserFoundPeer(role: RoleType, peer: BPPeer, inviteBlock: (connect: Bool, timeoutForInvite: NSTimeInterval) -> Void)
 }
@@ -99,7 +116,7 @@ import HHServices
     var displayName: String = UIDevice.currentDevice().name
     weak public var sessionDelegate: BluepeerSessionManagerDelegate?
     weak public var dataDelegate: BluepeerDataDelegate?
-    public var peers: [String:BPPeer] = [:] // IP string to BPPeer.
+    public var peers = Set<BPPeer>()
     var servicesBeingResolved = Set<HHService>()
     public var bluetoothState : BluetoothState = .Unknown
     var bluetoothPeripheralManager: CBPeripheralManager
@@ -114,12 +131,12 @@ import HHServices
         }
     }
     let headerTerminator: NSData = "\r\n\r\n".dataUsingEncoding(NSUTF8StringEncoding)! // same as HTTP. But header content here is just a number, representing the byte count of the incoming nsdata.
-    public var browserCompletionBlock: Bool -> () = {_ in }
     
     enum DataTag: Int {
         case TAG_HEADER = 1
         case TAG_BODY = 2
         case TAG_WRITING = 3
+        case TAG_AUTH = 4
     }
     
     // if queue isn't given, main queue is used
@@ -143,7 +160,7 @@ import HHServices
         }
         let acceptableChars = NSCharacterSet.init(charactersInString: "abcdefghijklmnopqrstuvwxyz1234567890-")
         self.displayName = String(self.displayName.characters.map { (char: Character) in
-            if self.charset(acceptableChars, containsCharacter: char) == false {
+            if acceptableChars.containsCharacter(char) == false {
                 return "-"
             } else {
                 return char
@@ -156,12 +173,7 @@ import HHServices
 
         self.bluetoothBlock = bluetoothBlock
         self.bluetoothPeripheralManager = CBPeripheralManager.init(delegate: self, queue: nil, options: [CBCentralManagerOptionShowPowerAlertKey:0])
-    }
-    
-    func charset(cset:NSCharacterSet, containsCharacter c:Character) -> Bool {
-        let s = String(c)
-        let result = s.rangeOfCharacterFromSet(cset)
-        return result != nil
+        NSLog("Initialized BluepeerObject. Name: \(self.displayName), bluetoothOnly: \(overBluetoothOnly ? "yes" : "no")")
     }
     
     deinit {
@@ -179,8 +191,8 @@ import HHServices
     public func disconnectSession() {
         // don't close serverSocket: expectation is that only stopAdvertising does this
         // loop through peers, disconenct all sockets
-        for (ip, peer) in self.peers {
-            NSLog("BluepeerObject disconnectSession: disconnecting \(ip)")
+        for peer in self.peers {
+            NSLog("BluepeerObject disconnectSession: disconnecting \(peer.IP)")
             peer.socket?.delegate = nil // we don't want to run our disconnection logic below
             peer.socket?.disconnect()
             peer.socket = nil
@@ -189,7 +201,7 @@ import HHServices
     }
     
     public func connectedRoleCount(role: RoleType) -> Int {
-        return self.peers.filter({ $0.1.role == role && $0.1.state == .Connected }).count
+        return self.peers.filter({ $0.role == role && $0.state == .Connected }).count
     }
     
     public func startAdvertising(role: RoleType) {
@@ -203,15 +215,8 @@ import HHServices
         // type must be like: _myexampleservice._tcp  (no trailing .)
         // txtData: let's use this for RoleType. For now just shove RoleType in there!
         // txtData, from http://www.zeroconf.org/rendezvous/txtrecords.html: Using TXT records larger than 1300 bytes is NOT RECOMMENDED at this time. The format of the data within a DNS TXT record is zero or more strings, packed together in memory without any intervening gaps or padding bytes for word alignment. The format of each constituent string within the DNS TXT record is a single length byte, followed by 0-255 bytes of text data.
-        
-//        let key: CFStringRef = "role" as NSString
-//        let val: CFStringRef = "Server" as NSString
-//        var keys = [unsafeAddressOf(key)]
-//        var values = [unsafeAddressOf(val)]
-//        var keyCallBacks = kCFTypeDictionaryKeyCallBacks
-//        var valCallBacks = kCFTypeDictionaryValueCallBacks
-//        let txtdict: CFDictionary = CFDictionaryCreate(kCFAllocatorDefault, &keys, &values, 1, &keyCallBacks, &valCallBacks)
-        
+    
+        // Could use the NSNetService version of this (TXTDATA maker), it'd be easier :)
         let txtdict: CFDictionary = ["role":"Server"] // assume I am a Server if I am told to start advertising
         let cfdata: Unmanaged<CFData>? = CFNetServiceCreateTXTDataWithDictionary(kCFAllocatorDefault, txtdict)
         let txtdata = cfdata?.takeUnretainedValue()
@@ -290,22 +295,28 @@ import HHServices
     
     
     // If specified, peers takes precedence.
-    public func sendData(datas: [NSData]!, toPeers:[BPPeer]?, toRole: RoleType) throws {
-        var targetPeers: [BPPeer]
-        if let toPeers = toPeers {
-            targetPeers = toPeers
-        } else {
-            let peersArray: [(String,BPPeer)] = peers.filter({
-                if toRole != .All {
-                    return $0.1.role == toRole && $0.1.state == .Connected
-                } else {
-                    return $0.1.state == .Connected
-                }
-            })
-            targetPeers = peersArray.map({$0.1})
-        }
-        
+    public func sendData(datas: [NSData], toPeers:[BPPeer]) throws {
         for data in datas {
+            NSLog("BluepeerObject: sending data size \(data.length) to \(toPeers.count) peers")
+            for peer in toPeers {
+                self.sendDataInternal(peer, data: data)
+            }
+        }
+    }
+    
+    public func sendData(datas: [NSData], toRole: RoleType) throws {
+        let targetPeers: [BPPeer] = peers.filter({
+            if toRole != .All {
+                return $0.role == toRole && $0.state == .Connected
+            } else {
+                return $0.state == .Connected
+            }
+        })
+    
+        for data in datas {
+            if data.length == 0 {
+                continue
+            }
             NSLog("BluepeerObject sending this data to %d peers", targetPeers.count)
             for peer in targetPeers {
                 self.sendDataInternal(peer, data: data)
@@ -331,7 +342,6 @@ import HHServices
     }
     
     public func getBrowser(completionBlock: Bool -> ()) -> UIViewController? {
-        self.browserCompletionBlock = completionBlock
         let initialVC = self.getStoryboard()?.instantiateInitialViewController()
         var browserVC = initialVC
         if let nav = browserVC as? UINavigationController {
@@ -342,6 +352,7 @@ import HHServices
             return nil
         }
         browser.bluepeerObject = self
+        browser.browserCompletionBlock = completionBlock
         return initialVC
     }
     
@@ -457,7 +468,8 @@ extension BluepeerObject : HHServiceDelegate {
         let newPeer = BPPeer.init()
         newPeer.role = role
         newPeer.displayName = service.name
-        self.peers[addressStr] = newPeer
+        newPeer.IP = addressStr
+        self.addPeer(newPeer)
         
         self.dispatch_on_delegate_queue({
             delegate.browserFoundPeer!(role, peer: newPeer) { (connect, timeoutForInvite) in
@@ -484,6 +496,16 @@ extension BluepeerObject : HHServiceDelegate {
         NSLog("BluepeerObject: ERROR, service did not resolve: \(service.name)")
         self.servicesBeingResolved.remove(service)
     }
+    
+    public func addPeer(newPeer: BPPeer) {
+        let replaced = self.peers.contains(newPeer)
+        self.peers.insert(newPeer)
+        if replaced {
+            NSLog("BluepeerObject: replaced peer with IP \(newPeer.IP)")
+        } else {
+            NSLog("BluepeerObject: added new peer with IP \(newPeer.IP)")
+        }
+    }
 }
 
 
@@ -498,9 +520,10 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             }
             NSLog("BluepeerObject: accepting new connection from \(newSocket.connectedHost)")
             let newPeer = BPPeer.init()
-            newPeer.state = .Connecting
+            newPeer.state = .AwaitingAuth
             newPeer.role = .Client
-            self.peers[connectedHost] = newPeer
+            newPeer.IP = connectedHost
+            self.addPeer(newPeer)
 
             self.dispatch_on_delegate_queue({
                 delegate.peerConnectionRequest!(newPeer, invitationHandler: { (inviteAccepted) in
@@ -509,6 +532,8 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
                         newPeer.socket = newSocket
                         newSocket.userData = newSocket.connectedHost // so that we can always use userData as the IP/host in the rest of the code
                         newPeer.state = .Connected
+                        var zero = UInt8(0) // CONVENTION: send a single 0 to show connection has been accepted, since it isn't possible to send a header for a payload of size zero except here.
+                        newSocket.writeData(NSData.init(bytes: &zero, length: 1), withTimeout: -1, tag: DataTag.TAG_WRITING.rawValue)
                         NSLog("... accepted (by my delegate)")
                         self.dispatch_on_delegate_queue({
                             self.sessionDelegate?.peerDidConnect!(.Client, peer: newPeer)
@@ -532,16 +557,13 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             assert(false, "BluepeerObject: programming error, expected socket.userData to be set!")
             return
         }
-        guard let peer = self.peers[sockUserdata] else {
+        guard let peer = self.peers.filter( { $0.IP == sockUserdata }).first else {
             assert(false, "BluepeerObject: programming error, expected to find a peer already in didConnectToHost")
             return
         }
-        peer.state = .Connected
-        NSLog("BluepeerObject: connected to \(sock.connectedHost)")
-        self.dispatch_on_delegate_queue({
-            self.sessionDelegate?.peerDidConnect!(peer.role, peer: peer)
-        })
-        sock.readDataToData(self.headerTerminator, withTimeout: -1, tag: DataTag.TAG_HEADER.rawValue)
+        peer.state = .AwaitingAuth
+        NSLog("BluepeerObject: got to state = awaitingAuth with \(sock.connectedHost), awaiting ACK ('0')")
+        sock.readDataToLength(1, withTimeout: -1, tag: DataTag.TAG_AUTH.rawValue)
     }
     
     public func socketDidDisconnect(sock: GCDAsyncSocket, withError err: NSError?) {
@@ -549,7 +571,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             assert(false, "BluepeerObject: ERROR, expected socket.userData in socketDidDisconnect")
             return
         }
-        guard let peer = self.peers[socketUserdata] else {
+        guard let peer = self.peers.filter( { $0.IP == socketUserdata }).first else {
             assert(false, "BluepeerObject: programming error, expected to find a peer already in didDisconnect")
             return
         }
@@ -566,15 +588,35 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             })
         case .NotConnected:
             assert(false, "ERROR: state is being tracked wrong")
-        case .Connecting:
+        case .Connecting, .AwaitingAuth:
             self.dispatch_on_delegate_queue({
-                self.sessionDelegate?.peerConnectionAttemptFailed!(peer.role, peer: peer)
+                self.sessionDelegate?.peerConnectionAttemptFailed!(peer.role, peer: peer, isAuthRejection: oldState == .AwaitingAuth)
             })
         }
     }
     
     public func socket(sock: GCDAsyncSocket, didReadData data: NSData, withTag tag: Int) {
-        if tag == DataTag.TAG_HEADER.rawValue {
+        guard let sockUserdata = sock.userData as? String else {
+            assert(false, "Error, expect all sockets to have userdata set")
+            return
+        }
+        guard let peer = self.peers.filter( { $0.IP == sockUserdata }).first else {
+            assert(false, "Error, I should know peers i receive data from!")
+            return
+        }
+
+        if tag == DataTag.TAG_AUTH.rawValue {
+            assert(data.length == 1, "ERROR: not right length of bytes")
+            var ack: UInt8 = 1
+            data.getBytes(&ack, length: 1)
+            assert(ack == 0, "ERROR: not the right ACK")
+            assert(peer.state == .AwaitingAuth, "ERROR: expect I only get this while awaiting auth")
+            peer.state = .Connected
+            self.dispatch_on_delegate_queue({
+                self.sessionDelegate?.peerDidConnect!(peer.role, peer: peer)
+            })
+            sock.readDataToData(self.headerTerminator, withTimeout: -1, tag: DataTag.TAG_HEADER.rawValue)
+        } else if tag == DataTag.TAG_HEADER.rawValue {
             // first, strip the trailing headerTerminator
             let dataWithoutTerminator = data.subdataWithRange(NSRange.init(location: 0, length: data.length - self.headerTerminator.length))
             var length: UInt = 0
@@ -582,14 +624,6 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             NSLog("BluepeerObject: got header, reading %lu bytes...", length)
             sock.readDataToLength(length, withTimeout: -1, tag: DataTag.TAG_BODY.rawValue)
         } else {
-            guard let sockUserdata = sock.userData as? String else {
-                assert(false, "Error, expect all sockets to have userdata set")
-                return
-            }
-            guard let peer = self.peers[sockUserdata] else {
-                assert(false, "Error, I should know peers i receive data from!")
-                return
-            }
             self.dispatch_on_delegate_queue({
                 self.dataDelegate?.didReceiveData(data, fromPeer: peer)
             })
@@ -622,5 +656,13 @@ extension BluepeerObject: CBPeripheralManagerDelegate {
             self.bluetoothState = .PoweredOn
         }
         self.bluetoothBlock?(bluetoothState: self.bluetoothState)
+    }
+}
+
+extension NSCharacterSet {
+    func containsCharacter(c:Character) -> Bool {
+        let s = String(c)
+        let result = s.rangeOfCharacterFromSet(self)
+        return result != nil
     }
 }

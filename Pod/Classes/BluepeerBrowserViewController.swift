@@ -12,6 +12,7 @@ import UIKit
 
     var bluepeerObject: BluepeerObject?
     var bluepeerSuperSessionDelegate: BluepeerSessionManagerDelegate?
+    public var browserCompletionBlock: (Bool -> ())?
     var peers: [(peer: BPPeer, inviteBlock: (connect: Bool, timeoutForInvite: NSTimeInterval) -> Void)] = []
     
     override public func viewDidLoad() {
@@ -61,11 +62,20 @@ extension BluepeerBrowserViewController: BluepeerSessionManagerDelegate {
     
     public func peerDidConnect(peerRole: RoleType, peer: BPPeer) {
         NSLog("BluepeerBrowserVC: connected, dismissing.")
-        self.dismissViewControllerAnimated(true, completion: nil)
+        self.dismissViewControllerAnimated(true, completion: {
+            self.browserCompletionBlock?(true)
+        })
     }
+    // TODO: user can cancel
     
-    public func peerConnectionAttemptFailed(peerRole: RoleType, peer: BPPeer) {
-        // TODO: try again
+    public func peerConnectionAttemptFailed(peerRole: RoleType, peer: BPPeer, isAuthRejection: Bool) {
+        if (isAuthRejection) {
+            self.dismissViewControllerAnimated(true, completion: {
+                self.browserCompletionBlock?(false)
+            })
+        } else {
+            // TODO: RETRY! just once?
+        }
     }
     
     public func browserFoundPeer(role: RoleType, peer: BPPeer, inviteBlock: (connect: Bool, timeoutForInvite: NSTimeInterval) -> Void) {
