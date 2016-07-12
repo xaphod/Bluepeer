@@ -8,9 +8,18 @@
 
 import UIKit
 
+enum CellType {
+    case LoadingRow
+    case NormalRow
+}
+
 @objc public class BluepeerRowTableViewCell: UITableViewCell {
+    
+    var celltype: CellType = .NormalRow
+    var peer: BPPeer?
 
     @IBOutlet weak var mainLabel: UILabel!
+    @IBOutlet weak var activityIndicator: UIActivityIndicatorView!
     
     override public func awakeFromNib() {
         super.awakeFromNib()
@@ -22,5 +31,17 @@ import UIKit
 
         // Configure the view for the selected state
     }
-
+    
+    public func updateDisplay() {
+        switch celltype {
+        case .LoadingRow:
+            self.mainLabel.text = "Searching..."
+            self.selectionStyle = .None
+            self.activityIndicator.startAnimating()
+            
+        case .NormalRow:
+            self.mainLabel.text = peer != nil ? peer!.displayName : "Unknown"
+            self.selectionStyle = .Default
+        }
+    }
 }

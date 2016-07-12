@@ -95,6 +95,7 @@ import HHServices
     optional func peerConnectionAttemptFailed(peerRole: RoleType, peer: BPPeer, isAuthRejection: Bool)
     optional func peerConnectionRequest(peer: BPPeer, invitationHandler: (Bool) -> Void) // was named: sessionConnectionRequest
     optional func browserFoundPeer(role: RoleType, peer: BPPeer, inviteBlock: (connect: Bool, timeoutForInvite: NSTimeInterval) -> Void)
+    optional func browserLostPeer(role: RoleType, peer: BPPeer)
 }
 
 @objc public protocol BluepeerDataDelegate {
@@ -317,7 +318,7 @@ import HHServices
             if data.length == 0 {
                 continue
             }
-            NSLog("BluepeerObject sending this data to %d peers", targetPeers.count)
+            NSLog("BluepeerObject sending data size \(data.length) to \(targetPeers.count) peers")
             for peer in targetPeers {
                 self.sendDataInternal(peer, data: data)
             }
@@ -383,9 +384,6 @@ extension BluepeerObject : HHServicePublisherDelegate {
         }
         
         do {
-            // TODO: Potentially filter bluetooth here, but hopefully not...
-            // try self.serverSocket.acceptOnInterface("en1", port: serverPort)
-            
             try serverSocket.acceptOnPort(serverPort)
         } catch {
             NSLog("BluepeerObject: ERROR accepting on serverSocket")
@@ -413,9 +411,17 @@ extension BluepeerObject : HHServiceBrowserDelegate {
         }
     }
     
-    // TODO: seems like service gets killed after 4 or 5 min automatically?
+    // TODO: test, seems like service gets killed after 4 or 5 min automatically?
     public func serviceBrowser(serviceBrowser: HHServiceBrowser!, didRemoveService service: HHService!, moreComing: Bool) {
         NSLog("BluepeerObject: didRemoveService \(service.name)")
+        if service.name != nil {
+            var peer: BPPeer? = self.peers.filter({ $0.displayName == service.name }).first
+            if let peer = peer {
+                self.dispatch_on_delegate_queue({
+                    self.sessionDelegate?.browserLostPeer?(peer.role, peer: peer)
+                })
+            }
+        }
     }
 }
 
@@ -454,16 +460,46 @@ extension BluepeerObject : HHServiceDelegate {
             NSLog("BluepeerObject: WARNING, ignoring resolved service because sessionDelegate is not set")
             return
         }
-        guard let addressStr = service.resolvedIPAddresses.first as? String else {
+        
+        guard var addressStr = service.resolvedIPAddresses.first as? String else {
             NSLog("BluepeerObject: serviceDidResolve IGNORING service because could not get address")
             return
         }
-        guard let port = service.resolvedPortNumbers.first as? NSNumber else {
+
+        if service.resolvedIPAddresses.count > 1 {
+            // Althoug DNS gets published via Bluetooth only if onlyBluetooth is set, can still see wifi IP addresses. So examine IPs and prefer bluetooth-looking IP if onlyBluetooth is set, otherwise stick with first one
+            var blueIP: String?
+            
+            for thisIP in service.resolvedIPAddresses {
+                if let thisIPStr = thisIP as? String {
+                    if thisIPStr.hasPrefix("169.254") { // WARNING: HARDCODED BLUETOOTH IP PREFIX FOR IOS
+                        blueIP = thisIPStr
+                        break
+                    }
+                }
+            }
+            if blueIP != nil && self.overBluetoothOnly {
+                NSLog("BluepeerObject: serviceDidResolve preferring 169.254.* Bluetooth IP since overBluetoothOnly is set")
+                addressStr = blueIP!
+            }
+        }
+        
+        guard var port = service.resolvedPortNumbers.first as? NSNumber else {
             NSLog("BluepeerObject: serviceDidResolve IGNORING service because could not get port")
             return
         }
         
-        self.stopBrowsing() // stop browsing once we found something to conncect to
+        if service.resolvedPortNumbers.count == service.resolvedIPAddresses.count {
+            var index: Int = 0
+            for i in (0..<service.resolvedIPAddresses.count) {
+                if (service.resolvedIPAddresses[i] as! String == addressStr) {
+                    index = i
+                    break
+                }
+            }
+            
+            port = service.resolvedPortNumbers[index] as! NSNumber
+        }
         
         let newPeer = BPPeer.init()
         newPeer.role = role
@@ -473,13 +509,13 @@ extension BluepeerObject : HHServiceDelegate {
         
         self.dispatch_on_delegate_queue({
             delegate.browserFoundPeer!(role, peer: newPeer) { (connect, timeoutForInvite) in
+                self.stopBrowsing() // stop browsing once user has done something
                 if connect {
                     do {
                         NSLog("... trying to connect...")
                         newPeer.socket = GCDAsyncSocket.init(delegate: self, delegateQueue: self.delegateQueue ?? dispatch_get_main_queue())
                         newPeer.socket?.userData = addressStr // save the IP in the socket userdata for correlation later
                         newPeer.state = .Connecting
-                        // try socket.connectToAddress(addressData, withTimeout: 20.0) // TODO: filtering to bluetooth could also happen here, but probably not a good idea.
                         try newPeer.socket?.connectToHost(addressStr, onPort: port.unsignedShortValue, withTimeout: timeoutForInvite)
                     } catch {
                         NSLog("BluepeerObject: could not start connectToAdddress.")

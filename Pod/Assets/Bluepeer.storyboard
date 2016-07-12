@@ -7,19 +7,20 @@
     <customFonts key="customFonts">
         <mutableArray key="OpenSans-Regular.ttf">
             <string>OpenSans</string>
+            <string>OpenSans</string>
         </mutableArray>
     </customFonts>
     <scenes>
         <!--Bluepeer Browser View Controller-->
         <scene sceneID="4Zg-z6-XTg">
             <objects>
-                <tableViewController id="eDh-Ny-Qwh" customClass="BluepeerBrowserViewController" customModule="Photobooth" customModuleProvider="target" sceneMemberID="viewController">
+                <tableViewController id="eDh-Ny-Qwh" customClass="BluepeerBrowserViewController" customModule="Bluepeer" customModuleProvider="target" sceneMemberID="viewController">
                     <tableView key="view" clipsSubviews="YES" contentMode="scaleToFill" alwaysBounceVertical="YES" dataMode="prototypes" style="plain" separatorStyle="default" rowHeight="44" sectionHeaderHeight="28" sectionFooterHeight="28" id="1XZ-XB-Ye0">
                         <rect key="frame" x="0.0" y="0.0" width="600" height="600"/>
                         <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                         <color key="backgroundColor" white="1" alpha="1" colorSpace="calibratedWhite"/>
                         <prototypes>
-                            <tableViewCell clipsSubviews="YES" contentMode="scaleToFill" selectionStyle="default" indentationWidth="10" reuseIdentifier="peerRow" id="ul1-0i-6Jk" customClass="BluepeerRowTableViewCell" customModule="Photobooth" customModuleProvider="target">
+                            <tableViewCell clipsSubviews="YES" contentMode="scaleToFill" selectionStyle="default" indentationWidth="10" reuseIdentifier="peerRow" id="ul1-0i-6Jk" customClass="BluepeerRowTableViewCell" customModule="Bluepeer" customModuleProvider="target">
                                 <rect key="frame" x="0.0" y="92" width="600" height="44"/>
                                 <autoresizingMask key="autoresizingMask"/>
                                 <tableViewCellContentView key="contentView" opaque="NO" clipsSubviews="YES" multipleTouchEnabled="YES" contentMode="center" tableViewCell="ul1-0i-6Jk" id="btx-cJ-lfd">
@@ -27,7 +28,7 @@
                                     <autoresizingMask key="autoresizingMask"/>
                                     <subviews>
                                         <label opaque="NO" userInteractionEnabled="NO" contentMode="left" horizontalHuggingPriority="251" verticalHuggingPriority="251" text="peerRow Label" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="NO" translatesAutoresizingMaskIntoConstraints="NO" id="OFS-cM-rAc">
-                                            <rect key="frame" x="8" y="10" width="584" height="23.5"/>
+                                            <rect key="frame" x="8" y="12" width="584" height="20"/>
                                             <fontDescription key="fontDescription" name="OpenSans" family="Open Sans" pointSize="17"/>
                                             <color key="textColor" red="0.0" green="0.0" blue="0.0" alpha="1" colorSpace="calibratedRGB"/>
                                             <nil key="highlightedColor"/>
@@ -43,22 +44,61 @@
                                     <outlet property="mainLabel" destination="OFS-cM-rAc" id="zyW-gz-EBy"/>
                                 </connections>
                             </tableViewCell>
+                            <tableViewCell clipsSubviews="YES" contentMode="scaleToFill" selectionStyle="default" indentationWidth="10" reuseIdentifier="loadingRow" id="iux-Eu-LhU" customClass="BluepeerRowTableViewCell" customModule="Bluepeer" customModuleProvider="target">
+                                <rect key="frame" x="0.0" y="136" width="600" height="44"/>
+                                <autoresizingMask key="autoresizingMask"/>
+                                <tableViewCellContentView key="contentView" opaque="NO" clipsSubviews="YES" multipleTouchEnabled="YES" contentMode="center" tableViewCell="iux-Eu-LhU" id="6IQ-Jh-GeH">
+                                    <rect key="frame" x="0.0" y="0.0" width="600" height="43.5"/>
+                                    <autoresizingMask key="autoresizingMask"/>
+                                    <subviews>
+                                        <label opaque="NO" userInteractionEnabled="NO" contentMode="left" horizontalHuggingPriority="251" verticalHuggingPriority="251" text="loadingRow Label" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="NO" translatesAutoresizingMaskIntoConstraints="NO" id="gjb-I3-fYr">
+                                            <rect key="frame" x="44" y="12" width="548" height="20"/>
+                                            <fontDescription key="fontDescription" name="OpenSans" family="Open Sans" pointSize="17"/>
+                                            <color key="textColor" red="0.45694127678871155" green="0.5310402512550354" blue="0.52952206134796143" alpha="1" colorSpace="calibratedRGB"/>
+                                            <nil key="highlightedColor"/>
+                                        </label>
+                                        <activityIndicatorView opaque="NO" contentMode="scaleToFill" horizontalHuggingPriority="750" verticalHuggingPriority="750" animating="YES" style="gray" translatesAutoresizingMaskIntoConstraints="NO" id="KVj-Iw-BSc">
+                                            <rect key="frame" x="12" y="12" width="20" height="20"/>
+                                        </activityIndicatorView>
+                                    </subviews>
+                                    <constraints>
+                                        <constraint firstItem="gjb-I3-fYr" firstAttribute="centerY" secondItem="6IQ-Jh-GeH" secondAttribute="centerY" id="0Ee-Hs-jeS"/>
+                                        <constraint firstItem="gjb-I3-fYr" firstAttribute="leading" secondItem="KVj-Iw-BSc" secondAttribute="trailing" constant="12" id="5Ry-2j-P5E"/>
+                                        <constraint firstItem="KVj-Iw-BSc" firstAttribute="centerY" secondItem="6IQ-Jh-GeH" secondAttribute="centerY" id="M93-Ci-tv1"/>
+                                        <constraint firstAttribute="trailing" secondItem="gjb-I3-fYr" secondAttribute="trailing" constant="8" id="NoL-rO-uog"/>
+                                        <constraint firstItem="KVj-Iw-BSc" firstAttribute="leading" secondItem="6IQ-Jh-GeH" secondAttribute="leading" constant="12" id="qsA-a5-hpQ"/>
+                                    </constraints>
+                                </tableViewCellContentView>
+                                <connections>
+                                    <outlet property="activityIndicator" destination="KVj-Iw-BSc" id="094-eL-l2Z"/>
+                                    <outlet property="mainLabel" destination="gjb-I3-fYr" id="WR8-yU-oBH"/>
+                                </connections>
+                            </tableViewCell>
                         </prototypes>
                         <connections>
                             <outlet property="dataSource" destination="eDh-Ny-Qwh" id="0qN-dZ-K77"/>
                             <outlet property="delegate" destination="eDh-Ny-Qwh" id="zIW-rr-K12"/>
                         </connections>
                     </tableView>
-                    <navigationItem key="navigationItem" id="Lbz-1G-ond"/>
+                    <navigationItem key="navigationItem" id="Lbz-1G-ond">
+                        <barButtonItem key="leftBarButtonItem" systemItem="cancel" id="HJg-Jr-WFb">
+                            <connections>
+                                <action selector="cancelPressed:" destination="eDh-Ny-Qwh" id="OO6-jp-QTN"/>
+                            </connections>
+                        </barButtonItem>
+                    </navigationItem>
+                    <connections>
+                        <outlet property="cancelButton" destination="HJg-Jr-WFb" id="L7F-rD-wzw"/>
+                    </connections>
                 </tableViewController>
                 <placeholder placeholderIdentifier="IBFirstResponder" id="28z-zE-gDf" userLabel="First Responder" sceneMemberID="firstResponder"/>
             </objects>
             <point key="canvasLocation" x="1608" y="54"/>
         </scene>
-        <!--Navigation Controller-->
+        <!--Bluepeer Navigation Controller-->
         <scene sceneID="LxE-7b-Ezm">
             <objects>
-                <navigationController automaticallyAdjustsScrollViewInsets="NO" id="YOx-Kx-sq2" sceneMemberID="viewController">
+                <navigationController automaticallyAdjustsScrollViewInsets="NO" id="YOx-Kx-sq2" customClass="BluepeerNavigationController" customModule="Bluepeer" customModuleProvider="target" sceneMemberID="viewController">
                     <toolbarItems/>
                     <navigationBar key="navigationBar" contentMode="scaleToFill" id="laE-ua-FuD">
                         <rect key="frame" x="0.0" y="0.0" width="320" height="44"/>

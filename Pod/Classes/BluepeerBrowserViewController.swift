@@ -15,6 +15,18 @@ import UIKit
     public var browserCompletionBlock: (Bool -> ())?
     var peers: [(peer: BPPeer, inviteBlock: (connect: Bool, timeoutForInvite: NSTimeInterval) -> Void)] = []
     
+    @IBOutlet weak var cancelButton: UIBarButtonItem!
+    
+    override public var preferredContentSize: CGSize {
+        get {
+            return CGSizeMake(320, 280)
+        }
+        set {
+            preferredContentSize = newValue
+        }
+    }
+    
+    
     override public func viewDidLoad() {
         super.viewDidLoad()
         guard let bo = bluepeerObject else {
@@ -24,6 +36,16 @@ import UIKit
         self.bluepeerSuperSessionDelegate = bo.sessionDelegate
         bo.sessionDelegate = self
         bo.startBrowsing()
+    }
+    
+    override public func viewWillAppear(animated: Bool) {
+        super.viewWillAppear(animated)
+//        let popoverPresentationVC = self.parentViewController?.popoverPresentationController
+//        if (popoverPresentationVC != nil && UIPopoverArrowDirection.Unknown.rawValue > popoverPresentationVC!.arrowDirection.rawValue) {
+//            self.navigationItem.setLeftBarButtonItem(nil, animated: false)
+//        } else {
+//            // presented as modal view controller (on iPhone)
+//        }
     }
     
     override public func viewWillDisappear(animated: Bool) {
@@ -40,21 +62,41 @@ import UIKit
     }
 
     override public func tableView(tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        return self.peers.count
+        return max(self.peers.count, 1)
     }
 
     override public func tableView(tableView: UITableView, cellForRowAtIndexPath indexPath: NSIndexPath) -> UITableViewCell {
-        // TODO: min rows is 1, show spinner/loading row...
-        let cell = tableView.dequeueReusableCellWithIdentifier("peerRow", forIndexPath: indexPath) as! BluepeerRowTableViewCell
-        let peer = self.peers[indexPath.row] // TODO: can't this throw arrayindexoutofbounds exception? tried try/catch, didn't seem to work
-        cell.mainLabel.text = peer.peer.displayName
+        var cell: BluepeerRowTableViewCell
+        if self.peers.count == 0 {
+            // loading row
+            cell = tableView.dequeueReusableCellWithIdentifier("loadingRow", forIndexPath: indexPath) as! BluepeerRowTableViewCell
+            cell.celltype = .LoadingRow
+        } else {
+            cell = tableView.dequeueReusableCellWithIdentifier("peerRow", forIndexPath: indexPath) as! BluepeerRowTableViewCell
+            cell.celltype = .NormalRow
+            cell.peer = self.peers[indexPath.row].peer
+        }
+        cell.updateDisplay()
+        
         return cell
+    }
+    
+    override public func tableView(tableView: UITableView, willSelectRowAtIndexPath indexPath: NSIndexPath) -> NSIndexPath? {
+        if self.peers.count == 0 {
+            return nil
+        } else {
+            return indexPath
+        }
     }
 
     override public func tableView(tableView: UITableView, didSelectRowAtIndexPath indexPath: NSIndexPath) {
-        let peer = self.peers[indexPath.row] // TODO: can't this throw arrayindexoutofbounds exception? tried try/catch, didn't seem to work
+        let peer = self.peers[indexPath.row]
         peer.inviteBlock(connect: true, timeoutForInvite: 20.0)
         // TODO: show progressView..
+    }
+    
+    @IBAction func cancelPressed(sender: AnyObject) {
+        self.dismissViewControllerAnimated(true, completion: nil)
     }
 }
 
@@ -66,7 +108,6 @@ extension BluepeerBrowserViewController: BluepeerSessionManagerDelegate {
             self.browserCompletionBlock?(true)
         })
     }
-    // TODO: user can cancel
     
     public func peerConnectionAttemptFailed(peerRole: RoleType, peer: BPPeer, isAuthRejection: Bool) {
         if (isAuthRejection) {
@@ -81,5 +122,12 @@ extension BluepeerBrowserViewController: BluepeerSessionManagerDelegate {
     public func browserFoundPeer(role: RoleType, peer: BPPeer, inviteBlock: (connect: Bool, timeoutForInvite: NSTimeInterval) -> Void) {
         self.peers.append((peer: peer, inviteBlock: inviteBlock))
         self.tableView.reloadData()
+    }
+    
+    public func browserLostPeer(role: RoleType, peer: BPPeer) {
+        if let index = self.peers.indexOf({$0.0 == peer}) {
+            self.peers.removeAtIndex(index)
+            self.tableView.reloadData()
+        } 
     }
 }
