@@ -139,20 +139,15 @@ extension BluepeerBrowserViewController: BluepeerSessionManagerDelegate {
     }
     
     public func peerConnectionAttemptFailed(peerRole: RoleType, peer: BPPeer, isAuthRejection: Bool) {
-        if (isAuthRejection) {
-            self.progressView?.dismissWithAnimation(false)
-            self.progressView = nil
-            self.lastTimerStarted = nil
-            self.timer?.invalidate()
-            self.timer = nil
-
-            self.dismissViewControllerAnimated(true, completion: {
-                self.browserCompletionBlock?(false)
-            })
-        } else {
-            // TODO: RETRY! just once?
-            NSLog("Non auth fail")
-        }
+        self.progressView?.dismissWithAnimation(false)
+        self.progressView = nil
+        self.lastTimerStarted = nil
+        self.timer?.invalidate()
+        self.timer = nil
+        
+        self.dismissViewControllerAnimated(true, completion: {
+            self.browserCompletionBlock?(false)
+        })
     }
     
     public func browserFoundPeer(role: RoleType, peer: BPPeer, inviteBlock: (connect: Bool, timeoutForInvite: NSTimeInterval) -> Void) {
