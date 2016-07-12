@@ -12,7 +12,7 @@ Pod::Spec.new do |s|
   s.version          = "1.0.0"
   s.summary          = "Provides P2P (adhoc) Bluetooth and wifi networking at high-level"
   s.description      = <<-DESC
-			Provides P2P (adhoc) Bluetooth and wifi networking at high-level
+			Provides P2P (adhoc) Bluetooth and wifi networking at high-level. Uses low-level frameworks like HHServices to have more control than Multipeer and NSNetService.
                        DESC
   s.homepage         = "https://github.com/xaphod/Bluepeer"
   s.license          = 'Public domain'
