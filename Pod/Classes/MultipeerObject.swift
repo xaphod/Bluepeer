@@ -52,8 +52,6 @@ import CoreBluetooth
     
     // if queue isn't given, main queue is used
     public init(serviceType: String, displayName:String?, encryptionPreference: MCEncryptionPreference, queue:dispatch_queue_t?, bluetoothBlock: ((bluetoothState: BluetoothState)->Void)?) { // serviceType must be 1-15 chars, only a-z0-9 and hyphen, eg "xd-blueprint"
-        // TODO: make sure Blueprint is runnign with fabric
-//        Fabric.with([Crashlytics.self, Answers.self])
         self.serviceType = serviceType
         self.delegateQueue = queue
         self.bluetoothPeripheralManager = CBPeripheralManager.init(delegate: nil, queue: nil, options: [CBCentralManagerOptionShowPowerAlertKey:0])

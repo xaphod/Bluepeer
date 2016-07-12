@@ -1,6 +1,5 @@
 //
 //  BluepeerRowTableViewCell.swift
-//  Photobooth
 //
 //  Created by Tim Carr on 7/11/16.
 //  Copyright © 2016 Tim Carr Photo. All rights reserved.

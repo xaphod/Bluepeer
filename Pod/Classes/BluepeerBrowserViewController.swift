@@ -1,12 +1,12 @@
 //
 //  BluepeerBrowserViewController.swift
-//  Photobooth
 //
 //  Created by Tim Carr on 7/11/16.
 //  Copyright © 2016 Tim Carr Photo. All rights reserved.
 //
 
 import UIKit
+import xaphodObjCUtils
 
 @objc public class BluepeerBrowserViewController: UITableViewController {
 
@@ -14,7 +14,10 @@ import UIKit
     var bluepeerSuperSessionDelegate: BluepeerSessionManagerDelegate?
     public var browserCompletionBlock: (Bool -> ())?
     var peers: [(peer: BPPeer, inviteBlock: (connect: Bool, timeoutForInvite: NSTimeInterval) -> Void)] = []
-    
+    var progressView: XaphodProgressView?
+    var lastTimerStarted: NSDate?
+    var timer: NSTimer?
+
     @IBOutlet weak var cancelButton: UIBarButtonItem!
     
     override public var preferredContentSize: CGSize {
@@ -53,6 +56,9 @@ import UIKit
         self.bluepeerObject?.stopBrowsing()
         self.bluepeerObject?.sessionDelegate = self.bluepeerSuperSessionDelegate
         self.bluepeerObject = nil
+        self.lastTimerStarted = nil
+        self.timer?.invalidate()
+        self.timer = nil
     }
 
     // MARK: - Table view data source
@@ -90,13 +96,30 @@ import UIKit
     }
 
     override public func tableView(tableView: UITableView, didSelectRowAtIndexPath indexPath: NSIndexPath) {
+        self.progressView = XaphodProgressView.init(view: self.view)
+        self.view.addSubview(self.progressView!)
+        self.progressView!.text = ""
+        self.progressView!.showWithAnimation(true)
+        self.lastTimerStarted = NSDate.init()
+        self.timer = NSTimer.scheduledTimerWithTimeInterval(60.0, target: self, selector: #selector(timerFired), userInfo: nil, repeats: false)
+        
         let peer = self.peers[indexPath.row]
         peer.inviteBlock(connect: true, timeoutForInvite: 20.0)
-        // TODO: show progressView..
     }
     
     @IBAction func cancelPressed(sender: AnyObject) {
+        self.bluepeerObject?.disconnectSession()
         self.dismissViewControllerAnimated(true, completion: nil)
+    }
+    
+    func timerFired(timer: NSTimer) {
+        NSLog("Timer fired.")
+        if let _ = self.lastTimerStarted {
+            if (self.progressView != nil) {
+                self.progressView?.dismissWithAnimation(true)
+                self.progressView = nil
+            }
+        }
     }
 }
 
@@ -104,6 +127,12 @@ extension BluepeerBrowserViewController: BluepeerSessionManagerDelegate {
     
     public func peerDidConnect(peerRole: RoleType, peer: BPPeer) {
         NSLog("BluepeerBrowserVC: connected, dismissing.")
+        self.progressView?.dismissWithAnimation(false)
+        self.progressView = nil
+        self.lastTimerStarted = nil
+        self.timer?.invalidate()
+        self.timer = nil
+
         self.dismissViewControllerAnimated(true, completion: {
             self.browserCompletionBlock?(true)
         })
@@ -111,11 +140,18 @@ extension BluepeerBrowserViewController: BluepeerSessionManagerDelegate {
     
     public func peerConnectionAttemptFailed(peerRole: RoleType, peer: BPPeer, isAuthRejection: Bool) {
         if (isAuthRejection) {
+            self.progressView?.dismissWithAnimation(false)
+            self.progressView = nil
+            self.lastTimerStarted = nil
+            self.timer?.invalidate()
+            self.timer = nil
+
             self.dismissViewControllerAnimated(true, completion: {
                 self.browserCompletionBlock?(false)
             })
         } else {
             // TODO: RETRY! just once?
+            NSLog("Non auth fail")
         }
     }
     
@@ -125,6 +161,11 @@ extension BluepeerBrowserViewController: BluepeerSessionManagerDelegate {
     }
     
     public func browserLostPeer(role: RoleType, peer: BPPeer) {
+        self.progressView?.dismissWithAnimation(false)
+        self.progressView = nil
+        self.lastTimerStarted = nil
+        self.timer?.invalidate()
+        self.timer = nil
         if let index = self.peers.indexOf({$0.0 == peer}) {
             self.peers.removeAtIndex(index)
             self.tableView.reloadData()
