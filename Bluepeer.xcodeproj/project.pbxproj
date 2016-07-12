@@ -13,6 +13,7 @@
 		227D9BA61D346B1A004D21EF /* BluepeerObject.swift in Sources */ = {isa = PBXBuildFile; fileRef = 227D9BA11D346B1A004D21EF /* BluepeerObject.swift */; };
 		227D9BA71D346B1A004D21EF /* BluepeerRowTableViewCell.swift in Sources */ = {isa = PBXBuildFile; fileRef = 227D9BA21D346B1A004D21EF /* BluepeerRowTableViewCell.swift */; };
 		227D9BA81D346B1A004D21EF /* MultipeerObject.swift in Sources */ = {isa = PBXBuildFile; fileRef = 227D9BA31D346B1A004D21EF /* MultipeerObject.swift */; };
+		22E444B91D359CEB00341986 /* BluepeerNavigationController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22E444B81D359CEB00341986 /* BluepeerNavigationController.swift */; };
 		90C978BCD0225B4ABC0ABF12 /* Pods_Bluepeer.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = DD159EFB85981964A3AD8665 /* Pods_Bluepeer.framework */; };
 /* End PBXBuildFile section */
 
@@ -25,6 +26,7 @@
 		227D9BA11D346B1A004D21EF /* BluepeerObject.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = BluepeerObject.swift; sourceTree = "<group>"; };
 		227D9BA21D346B1A004D21EF /* BluepeerRowTableViewCell.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = BluepeerRowTableViewCell.swift; sourceTree = "<group>"; };
 		227D9BA31D346B1A004D21EF /* MultipeerObject.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = MultipeerObject.swift; sourceTree = "<group>"; };
+		22E444B81D359CEB00341986 /* BluepeerNavigationController.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = BluepeerNavigationController.swift; sourceTree = "<group>"; };
 		783D9C739CF6C4F81CF18F25 /* Pods-Bluepeer.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Bluepeer.debug.xcconfig"; path = "Pods/Target Support Files/Pods-Bluepeer/Pods-Bluepeer.debug.xcconfig"; sourceTree = "<group>"; };
 		BBEEB5FC5F87C954979C1B63 /* Pods-Bluepeer.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Bluepeer.release.xcconfig"; path = "Pods/Target Support Files/Pods-Bluepeer/Pods-Bluepeer.release.xcconfig"; sourceTree = "<group>"; };
 		DD159EFB85981964A3AD8665 /* Pods_Bluepeer.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_Bluepeer.framework; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -90,6 +92,7 @@
 		227D9B9F1D346B1A004D21EF /* Classes */ = {
 			isa = PBXGroup;
 			children = (
+				22E444B81D359CEB00341986 /* BluepeerNavigationController.swift */,
 				227D9BA01D346B1A004D21EF /* BluepeerBrowserViewController.swift */,
 				227D9BA11D346B1A004D21EF /* BluepeerObject.swift */,
 				227D9BA21D346B1A004D21EF /* BluepeerRowTableViewCell.swift */,
@@ -232,6 +235,7 @@
 				227D9BA61D346B1A004D21EF /* BluepeerObject.swift in Sources */,
 				227D9BA71D346B1A004D21EF /* BluepeerRowTableViewCell.swift in Sources */,
 				227D9BA81D346B1A004D21EF /* MultipeerObject.swift in Sources */,
+				22E444B91D359CEB00341986 /* BluepeerNavigationController.swift in Sources */,
 				227D9BA51D346B1A004D21EF /* BluepeerBrowserViewController.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

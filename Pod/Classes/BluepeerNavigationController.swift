@@ -15,11 +15,11 @@ class BluepeerNavigationController: UINavigationController {
             if let size = self.topViewController?.preferredContentSize {
                 return size
             } else {
-                return preferredContentSize
+                return self.preferredContentSize
             }
         }
         set {
-            preferredContentSize = newValue
+            self.preferredContentSize = newValue
         }
     }
 
