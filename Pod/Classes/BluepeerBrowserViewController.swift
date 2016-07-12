@@ -8,13 +8,13 @@
 
 import UIKit
 
-class BluepeerBrowserViewController: UITableViewController {
+@objc public class BluepeerBrowserViewController: UITableViewController {
 
     var bluepeerObject: BluepeerObject?
     var bluepeerSuperSessionDelegate: BluepeerSessionManagerDelegate?
     var peers: [(peer: BPPeer, inviteBlock: (connect: Bool, timeoutForInvite: NSTimeInterval) -> Void)] = []
     
-    override func viewDidLoad() {
+    override public func viewDidLoad() {
         super.viewDidLoad()
         guard let bo = bluepeerObject else {
             assert(false, "ERROR: set bluepeerObject before loading view")
@@ -25,7 +25,7 @@ class BluepeerBrowserViewController: UITableViewController {
         bo.startBrowsing()
     }
     
-    override func viewWillDisappear(animated: Bool) {
+    override public func viewWillDisappear(animated: Bool) {
         super.viewWillDisappear(animated)
         self.bluepeerObject?.stopBrowsing()
         self.bluepeerObject?.sessionDelegate = self.bluepeerSuperSessionDelegate
@@ -34,15 +34,15 @@ class BluepeerBrowserViewController: UITableViewController {
 
     // MARK: - Table view data source
 
-    override func numberOfSectionsInTableView(tableView: UITableView) -> Int {
+    override public func numberOfSectionsInTableView(tableView: UITableView) -> Int {
         return 1
     }
 
-    override func tableView(tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+    override public func tableView(tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
         return self.peers.count
     }
 
-    override func tableView(tableView: UITableView, cellForRowAtIndexPath indexPath: NSIndexPath) -> UITableViewCell {
+    override public func tableView(tableView: UITableView, cellForRowAtIndexPath indexPath: NSIndexPath) -> UITableViewCell {
         // TODO: min rows is 1, show spinner/loading row...
         let cell = tableView.dequeueReusableCellWithIdentifier("peerRow", forIndexPath: indexPath) as! BluepeerRowTableViewCell
         let peer = self.peers[indexPath.row] // TODO: can't this throw arrayindexoutofbounds exception? tried try/catch, didn't seem to work
@@ -50,7 +50,7 @@ class BluepeerBrowserViewController: UITableViewController {
         return cell
     }
 
-    override func tableView(tableView: UITableView, didSelectRowAtIndexPath indexPath: NSIndexPath) {
+    override public func tableView(tableView: UITableView, didSelectRowAtIndexPath indexPath: NSIndexPath) {
         let peer = self.peers[indexPath.row] // TODO: can't this throw arrayindexoutofbounds exception? tried try/catch, didn't seem to work
         peer.inviteBlock(connect: true, timeoutForInvite: 20.0)
         // TODO: show progressView..
@@ -59,16 +59,16 @@ class BluepeerBrowserViewController: UITableViewController {
 
 extension BluepeerBrowserViewController: BluepeerSessionManagerDelegate {
     
-    func peerDidConnect(peerRole: RoleType, peer: BPPeer) {
+    public func peerDidConnect(peerRole: RoleType, peer: BPPeer) {
         NSLog("BluepeerBrowserVC: connected, dismissing.")
         self.dismissViewControllerAnimated(true, completion: nil)
     }
     
-    func peerConnectionAttemptFailed(peerRole: RoleType, peer: BPPeer) {
+    public func peerConnectionAttemptFailed(peerRole: RoleType, peer: BPPeer) {
         // TODO: try again
     }
     
-    func browserFoundPeer(role: RoleType, peer: BPPeer, inviteBlock: (connect: Bool, timeoutForInvite: NSTimeInterval) -> Void) {
+    public func browserFoundPeer(role: RoleType, peer: BPPeer, inviteBlock: (connect: Bool, timeoutForInvite: NSTimeInterval) -> Void) {
         self.peers.append((peer: peer, inviteBlock: inviteBlock))
         self.tableView.reloadData()
     }

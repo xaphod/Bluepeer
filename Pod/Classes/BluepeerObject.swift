@@ -332,7 +332,7 @@ import HHServices
     
     public func getBrowser(completionBlock: Bool -> ()) -> UIViewController? {
         self.browserCompletionBlock = completionBlock
-        let initialVC = UIStoryboard.init(name: "Bluepeer", bundle: nil).instantiateInitialViewController()
+        let initialVC = self.getStoryboard()?.instantiateInitialViewController()
         var browserVC = initialVC
         if let nav = browserVC as? UINavigationController {
             browserVC = nav.topViewController
@@ -343,6 +343,14 @@ import HHServices
         }
         browser.bluepeerObject = self
         return initialVC
+    }
+    
+    func getStoryboard() -> UIStoryboard? {
+        guard let bundlePath = NSBundle.init(forClass: BluepeerObject.self).pathForResource("Bluepeer", ofType: "bundle") else {
+            assert(false, "ERROR: could not load bundle")
+            return nil
+        }
+        return UIStoryboard.init(name: "Bluepeer", bundle: NSBundle.init(path: bundlePath))
     }
 }
 
