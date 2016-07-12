@@ -25,7 +25,7 @@ import xaphodObjCUtils
             return CGSizeMake(320, 280)
         }
         set {
-            preferredContentSize = newValue
+            self.preferredContentSize = newValue
         }
     }
     

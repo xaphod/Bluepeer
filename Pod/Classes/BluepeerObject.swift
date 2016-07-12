@@ -437,7 +437,7 @@ extension BluepeerObject : HHServiceBrowserDelegate {
     public func serviceBrowser(serviceBrowser: HHServiceBrowser!, didRemoveService service: HHService!, moreComing: Bool) {
         NSLog("BluepeerObject: didRemoveService \(service.name)")
         if service.name != nil {
-            var peer: BPPeer? = self.peers.filter({ $0.displayName == service.name }).first
+            let peer: BPPeer? = self.peers.filter({ $0.displayName == service.name }).first
             if let peer = peer {
                 self.dispatch_on_delegate_queue({
                     self.sessionDelegate?.browserLostPeer?(peer.role, peer: peer)
@@ -570,7 +570,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
     
     public func socket(sock: GCDAsyncSocket, didAcceptNewSocket newSocket: GCDAsyncSocket) {
         
-        if let delegate = self.sessionDelegate {
+        if self.sessionDelegate != nil {
             guard let connectedHost = newSocket.connectedHost else {
                 NSLog("BluepeerObject: ERROR, accepted newSocket has no connectedHost (no-op)")
                 return
@@ -600,7 +600,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
         NSLog("BluepeerObject: got to state = awaitingAuth with \(sock.connectedHost), sending name then awaiting ACK ('0')")
         
         // make 32-byte UTF-8 name
-        var strData = NSMutableData.init(capacity: 32)
+        let strData = NSMutableData.init(capacity: 32)
         for c in self.displayName.characters {
             if let thisData = String.init(c).dataUsingEncoding(NSUTF8StringEncoding) {
                 if thisData.length + (strData?.length)! < 32 {
@@ -612,7 +612,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             }
         }
         // pad to 32 bytes!
-        var paddedStrData: NSMutableData = "                                ".dataUsingEncoding(NSUTF8StringEncoding)?.mutableCopy() as! NSMutableData // that's 32 spaces :)
+        let paddedStrData: NSMutableData = "                                ".dataUsingEncoding(NSUTF8StringEncoding)?.mutableCopy() as! NSMutableData // that's 32 spaces :)
         paddedStrData.replaceBytesInRange(NSMakeRange(0, strData!.length), withBytes: (strData?.bytes)!)
         sock.writeData(paddedStrData, withTimeout: Timeouts.HEADER.rawValue, tag: DataTag.TAG_WRITING.rawValue)
         

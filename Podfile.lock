@@ -3,15 +3,18 @@ PODS:
     - CocoaAsyncSocket/GCD (= 7.5.0)
   - CocoaAsyncSocket/GCD (7.5.0)
   - HHServices (1.0.2)
+  - xaphodObjCUtils (0.0.2)
 
 DEPENDENCIES:
   - CocoaAsyncSocket
   - HHServices (>= 1.0.2)
+  - xaphodObjCUtils
 
 SPEC CHECKSUMS:
   CocoaAsyncSocket: 3baeb1ddd969f81cf9fca81053ae49ef2d1cbbfa
   HHServices: ceb8719982c662014c065e520320e4d392cdab54
+  xaphodObjCUtils: 608252f99b771b0fe5696103038cffd8d84581d9
 
-PODFILE CHECKSUM: 05d3bbadf4538fa83e0ac421f0e3e3292b7de2ac
+PODFILE CHECKSUM: b8b638421476b4a4ee5bd3017ff29ca84809f734
 
 COCOAPODS: 1.0.1
