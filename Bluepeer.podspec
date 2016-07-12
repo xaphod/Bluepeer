@@ -1,5 +1,5 @@
 #
-# Be sure to run `pod lib lint EOSFTPServer.podspec' to ensure this is a
+# Be sure to run `pod lib lint filename.podspec' to ensure this is a
 # valid spec and remove all comments before submitting the spec.
 #
 # Any lines starting with a # are optional, but encouraged
@@ -27,7 +27,7 @@ Pod::Spec.new do |s|
   }
   # s.public_header_files = 'Pod/Classes/**/*.h'
   s.dependency 'CocoaAsyncSocket', '>= 7.4.0'
-  s.dependency 'HHServices'
+  s.dependency 'HHServices', '>= 1.0.2'
   #s.xcconfig = {'OTHER_LDFLAGS' => '-ObjC -all_load'}
   #s.prefix_header_file = 'Pod/Classes/EOSFTPServer-Prefix.pch'
 end

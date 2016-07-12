@@ -9,7 +9,8 @@
 import Foundation
 import CoreBluetooth
 import CFNetwork
-
+import CocoaAsyncSocket
+import HHServices
 
 // NOTE: requires pod CocoaAsyncSocket
 
@@ -93,7 +94,7 @@ import CFNetwork
     public var advertising: Bool = false
     public var browsing: Bool = false
     public var serviceType: String
-    var serverPort: UInt16 = UInt16(((UIApplication.sharedApplication().delegate as? AppDelegate)?.getFreeTCPPort())!)
+    var serverPort: UInt16 = 0
     var versionString: String = "unknown"
     var displayName: String = UIDevice.currentDevice().name
     weak public var sessionDelegate: BluepeerSessionManagerDelegate?
@@ -122,7 +123,8 @@ import CFNetwork
     }
     
     // if queue isn't given, main queue is used
-    public init(serviceType: String, displayName:String?, queue:dispatch_queue_t?, overBluetoothOnly:Bool, bluetoothBlock: ((bluetoothState: BluetoothState)->Void)?) { // serviceType must be 1-15 chars, only a-z0-9 and hyphen, eg "xd-blueprint"
+    public init(serviceType: String, displayName:String?, queue:dispatch_queue_t?, serverPort: UInt16, overBluetoothOnly:Bool, bluetoothBlock: ((bluetoothState: BluetoothState)->Void)?) { // serviceType must be 1-15 chars, only a-z0-9 and hyphen, eg "xd-blueprint"
+        self.serverPort = serverPort
         self.serviceType = "_" + serviceType + "._tcp"
         self.overBluetoothOnly = overBluetoothOnly
         self.delegateQueue = queue

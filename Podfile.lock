@@ -1,0 +1,17 @@
+PODS:
+  - CocoaAsyncSocket (7.5.0):
+    - CocoaAsyncSocket/GCD (= 7.5.0)
+  - CocoaAsyncSocket/GCD (7.5.0)
+  - HHServices (1.0.2)
+
+DEPENDENCIES:
+  - CocoaAsyncSocket
+  - HHServices (>= 1.0.2)
+
+SPEC CHECKSUMS:
+  CocoaAsyncSocket: 3baeb1ddd969f81cf9fca81053ae49ef2d1cbbfa
+  HHServices: ceb8719982c662014c065e520320e4d392cdab54
+
+PODFILE CHECKSUM: 05d3bbadf4538fa83e0ac421f0e3e3292b7de2ac
+
+COCOAPODS: 1.0.1
