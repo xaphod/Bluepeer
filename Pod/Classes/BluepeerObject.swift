@@ -427,7 +427,6 @@ import HHServices
 extension GCDAsyncSocket {
     var peer: BPPeer? {
         guard let bo = self.delegate as? BluepeerObject else {
-            assert(false, "BluepeerObject: socket does not have delegate set to bluepeerObject");
             return nil
         }
         guard let peer = bo.peers.filter({ $0.socket == self }).first else {
@@ -671,7 +670,8 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
     
     public func socketDidDisconnect(sock: GCDAsyncSocket, withError err: NSError?) {
         guard let peer = sock.peer else {
-            assert(false, "BluepeerObject: programming error, expected to find a peer in didDisconnect")
+            NSLog("BluepeerObject: WARNING, expected to find a peer in didDisconnect")
+            sock.delegate = nil
             return
         }
         let oldState = peer.state
