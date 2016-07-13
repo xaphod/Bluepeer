@@ -354,6 +354,7 @@ import HHServices
     
     func scheduleNextKeepAliveTimer(peer: BPPeer) {
         dispatch_async(dispatch_get_main_queue(), {
+            NSLog("BluepeerObject: keepalive scheduled for \(peer.displayName)")
             peer.keepAliveTimer = NSTimer.scheduledTimerWithTimeInterval(Timeouts.HEADER.rawValue - 10.0, target: self, selector: #selector(self.keepAliveTimerFired), userInfo: ["peer":peer], repeats: false)
         })
     }
@@ -695,10 +696,11 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             data.getBytes(&ack, length: 1)
             assert(ack == 0, "ERROR: not the right ACK")
             assert(peer.state == .AwaitingAuth, "ERROR: expect I only get this while awaiting auth")
-            peer.state = .Connected
+            peer.state = .Connected // CLIENT becomes connected
             self.dispatch_on_delegate_queue({
                 self.sessionDelegate?.peerDidConnect!(peer.role, peer: peer)
             })
+            self.scheduleNextKeepAliveTimer(peer)
             sock.readDataToData(self.headerTerminator, withTimeout: Timeouts.HEADER.rawValue, tag: DataTag.TAG_HEADER.rawValue)
         } else if tag == DataTag.TAG_HEADER.rawValue {
             // first, strip the trailing headerTerminator
@@ -725,13 +727,14 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
                 self.dispatch_on_delegate_queue({
                     delegate.peerConnectionRequest!(peer, invitationHandler: { (inviteAccepted) in
                         if inviteAccepted && peer.state == .AwaitingAuth && sock.isConnected == true {
-                            peer.state = .Connected
+                            peer.state = .Connected // SERVER becomes connected
                             var zero = UInt8(0) // CONVENTION: SERVER sends CLIENT a single 0 to show connection has been accepted, since it isn't possible to send a header for a payload of size zero except here.
                             sock.writeData(NSData.init(bytes: &zero, length: 1), withTimeout: Timeouts.HEADER.rawValue, tag: DataTag.TAG_WRITING.rawValue)
                             NSLog("... accepted (by my delegate)")
                             self.dispatch_on_delegate_queue({
                                 self.sessionDelegate?.peerDidConnect!(.Client, peer: peer)
                             })
+                            self.scheduleNextKeepAliveTimer(peer)
                             sock.readDataToData(self.headerTerminator, withTimeout: Timeouts.HEADER.rawValue, tag: DataTag.TAG_HEADER.rawValue)
                         } else {
                             peer.state = .NotConnected
@@ -752,13 +755,13 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
     }
     
     public func socket(sock: GCDAsyncSocket, shouldTimeoutReadWithTag tag: Int, elapsed: NSTimeInterval, bytesDone length: UInt) -> NSTimeInterval {
-        NSLog("BluepeerObject: socket timed out waiting for read. Disconnecting.")
+        NSLog("BluepeerObject: socket timed out waiting for read. Tag: \(tag). Disconnecting.")
         sock.disconnect()
         return 0
     }
     
     public func socket(sock: GCDAsyncSocket, shouldTimeoutWriteWithTag tag: Int, elapsed: NSTimeInterval, bytesDone length: UInt) -> NSTimeInterval {
-        NSLog("BluepeerObject: socket timed out waiting for write. Disconnecting.")
+        NSLog("BluepeerObject: socket timed out waiting for write. Tag: \(tag). Disconnecting.")
         sock.disconnect()
         return 0
     }
