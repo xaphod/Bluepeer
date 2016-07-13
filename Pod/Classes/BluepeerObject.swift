@@ -361,6 +361,7 @@ import HHServices
     func keepAliveTimerFired(timer: NSTimer) {
         guard let peer = timer.userInfo?["peer"] as? BPPeer else {
             assert(false, "I'm expecting keepAlive timers can always find their peers, ie the peers don't get erased")
+            return
         }
         if peer.state != .Connected {
             NSLog("BluepeerObject: keepAlive timer finds peer isn't connected (no-op)")
