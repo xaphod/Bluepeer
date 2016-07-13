@@ -86,7 +86,8 @@ import HHServices
 //        str = String(str.characters.filter { acceptableChars.containsCharacter($0) })
 //        return Int.init(str)!
     }
-    public var keepAliveTimer: NSTimer?
+    public var keepaliveTimer: NSTimer?
+    public var lastReceivedOrSentData: NSDate = NSDate.init(timeIntervalSince1970: 0)
 }
 
 @objc public protocol BluepeerSessionManagerDelegate {
@@ -190,7 +191,7 @@ import HHServices
     
     deinit {
         NSNotificationCenter.defaultCenter().removeObserver(self)
-        self.killAllKeepAliveTimers()
+        self.killAllKeepaliveTimers()
     }
     
     // Note: only disconnect is handled. My delegate is expected to reconnect if needed.
@@ -211,7 +212,7 @@ import HHServices
             peer.socket = nil
             peer.state = .NotConnected
         }
-        self.killAllKeepAliveTimers()
+        self.killAllKeepaliveTimers()
     }
     
     public func connectedRoleCount(role: RoleType) -> Int {
@@ -340,22 +341,32 @@ import HHServices
 
     func sendDataInternal(peer: BPPeer, data: NSData) {
         // send header first. Then separator. Then send body.
-        dispatch_async(dispatch_get_main_queue(), {
-            peer.keepAliveTimer?.invalidate()
-            peer.keepAliveTimer = nil
-        })
         var length: UInt = UInt(data.length)
-        let headerdata = NSData.init(bytes: &length, length: sizeof(UInt))
-        peer.socket?.writeData(headerdata, withTimeout: Timeouts.HEADER.rawValue, tag: DataTag.TAG_WRITING.rawValue)
-        peer.socket?.writeData(self.headerTerminator, withTimeout: Timeouts.HEADER.rawValue, tag: DataTag.TAG_WRITING.rawValue)
-        peer.socket?.writeData(data, withTimeout: Timeouts.BODY.rawValue, tag: DataTag.TAG_WRITING.rawValue)
-        self.scheduleNextKeepAliveTimer(peer)
+        var senddata = NSMutableData.init(bytes: &length, length: sizeof(UInt))
+        senddata.appendData(self.headerTerminator)
+        senddata.appendData(data)
+        peer.socket?.writeData(senddata, withTimeout: Timeouts.BODY.rawValue, tag: DataTag.TAG_WRITING.rawValue)
     }
     
-    func scheduleNextKeepAliveTimer(peer: BPPeer) {
+    func scheduleNextKeepaliveTimer(peer: BPPeer) {
+        if peer.state != .Connected {
+            return
+        }
+        if peer.keepaliveTimer?.valid == true && abs(peer.lastReceivedOrSentData.timeIntervalSinceNow) < 5.0 {
+            // flood protection
+            return
+        }
+        peer.lastReceivedOrSentData = NSDate.init()
+        
         dispatch_async(dispatch_get_main_queue(), {
-            NSLog("BluepeerObject: keepalive scheduled for \(peer.displayName)")
-            peer.keepAliveTimer = NSTimer.scheduledTimerWithTimeInterval(Timeouts.HEADER.rawValue - 10.0, target: self, selector: #selector(self.keepAliveTimerFired), userInfo: ["peer":peer], repeats: false)
+            let delay: NSTimeInterval = Timeouts.HEADER.rawValue - 5.0 - (Double(arc4random_uniform(10000)) / Double(1000)) // definitely 5s before HEADER timeout, or as much as 15s before
+            if peer.keepaliveTimer?.valid == true {
+                NSLog("BluepeerObject: keepalive rescheduled for \(peer.displayName) in \(delay)s")
+                peer.keepaliveTimer?.fireDate = NSDate.init(timeIntervalSinceNow: delay)
+            } else {
+                NSLog("BluepeerObject: keepalive INITIAL SCHEDULING for \(peer.displayName) in \(delay)s")
+                peer.keepaliveTimer = NSTimer.scheduledTimerWithTimeInterval(delay, target: self, selector: #selector(self.keepAliveTimerFired), userInfo: ["peer":peer], repeats: true)
+            }
         })
     }
     
@@ -367,17 +378,17 @@ import HHServices
         if peer.state != .Connected {
             NSLog("BluepeerObject: keepAlive timer finds peer isn't connected (no-op)")
         } else {
-            peer.socket?.writeData(self.keepAliveHeader, withTimeout: Timeouts.HEADER.rawValue, tag: DataTag.TAG_WRITING.rawValue)
-            peer.socket?.writeData(self.headerTerminator, withTimeout: Timeouts.HEADER.rawValue, tag: DataTag.TAG_WRITING.rawValue)
+            var senddata = NSMutableData.init(data: self.keepAliveHeader)
+            senddata.appendData(self.headerTerminator)
+            peer.socket?.writeData(senddata, withTimeout: Timeouts.HEADER.rawValue, tag: DataTag.TAG_WRITING.rawValue)
             NSLog("BluepeerObject: send keepAlive to \(peer.displayName) @ \(peer.IP)")
-            self.scheduleNextKeepAliveTimer(peer)
         }
     }
     
-    func killAllKeepAliveTimers() {
+    func killAllKeepaliveTimers() {
         for peer in self.peers {
-            peer.keepAliveTimer?.invalidate()
-            peer.keepAliveTimer = nil
+            peer.keepaliveTimer?.invalidate()
+            peer.keepaliveTimer = nil
         }
     }
     
@@ -665,8 +676,8 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
         }
         let oldState = peer.state
         peer.state = .NotConnected
-        peer.keepAliveTimer?.invalidate()
-        peer.keepAliveTimer = nil
+        peer.keepaliveTimer?.invalidate()
+        peer.keepaliveTimer = nil
         peer.socket = nil
         sock.delegate = nil
         NSLog("BluepeerObject: \(peer.displayName) @ \(peer.IP) disconnected")
@@ -689,6 +700,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             assert(false, "BluepeerObject: programming error, expected to find a peer in didReadData")
             return
         }
+        self.scheduleNextKeepaliveTimer(peer)
 
         if tag == DataTag.TAG_AUTH.rawValue {
             assert(data.length == 1, "ERROR: not right length of bytes")
@@ -700,8 +712,8 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             self.dispatch_on_delegate_queue({
                 self.sessionDelegate?.peerDidConnect!(peer.role, peer: peer)
             })
-            self.scheduleNextKeepAliveTimer(peer)
             sock.readDataToData(self.headerTerminator, withTimeout: Timeouts.HEADER.rawValue, tag: DataTag.TAG_HEADER.rawValue)
+            
         } else if tag == DataTag.TAG_HEADER.rawValue {
             // first, strip the trailing headerTerminator
             let dataWithoutTerminator = data.subdataWithRange(NSRange.init(location: 0, length: data.length - self.headerTerminator.length))
@@ -714,6 +726,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
                 NSLog("BluepeerObject: got header, reading %lu bytes...", length)
                 sock.readDataToLength(length, withTimeout: Timeouts.BODY.rawValue, tag: DataTag.TAG_BODY.rawValue)
             }
+            
         } else if tag == DataTag.TAG_NAME.rawValue {
             
             var name = String.init(data: data, encoding: NSUTF8StringEncoding)
@@ -734,7 +747,6 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
                             self.dispatch_on_delegate_queue({
                                 self.sessionDelegate?.peerDidConnect!(.Client, peer: peer)
                             })
-                            self.scheduleNextKeepAliveTimer(peer)
                             sock.readDataToData(self.headerTerminator, withTimeout: Timeouts.HEADER.rawValue, tag: DataTag.TAG_HEADER.rawValue)
                         } else {
                             peer.state = .NotConnected
@@ -746,7 +758,8 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
                     })
                 })
             }
-        } else {
+            
+        } else { // BODY case
             self.dispatch_on_delegate_queue({
                 self.dataDelegate?.didReceiveData(data, fromPeer: peer)
             })
@@ -754,16 +767,56 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
         }
     }
     
+    public func socket(sock: GCDAsyncSocket, didWriteDataWithTag tag: Int) {
+        guard let peer = sock.peer else {
+            assert(false, "BluepeerObject: programming error, expected to find a peer in didWriteData")
+            return
+        }
+        self.scheduleNextKeepaliveTimer(peer)
+    }
+    
+    public func socket(sock: GCDAsyncSocket, didReadPartialDataOfLength partialLength: UInt, tag: Int) {
+        guard let peer = sock.peer else {
+            assert(false, "BluepeerObject: programming error, expected to find a peer in didReadPartialDataOfLength")
+            return
+        }
+        self.scheduleNextKeepaliveTimer(peer)
+    }
+    
+    public func socket(sock: GCDAsyncSocket, didWritePartialDataOfLength partialLength: UInt, tag: Int) {
+        guard let peer = sock.peer else {
+            assert(false, "BluepeerObject: programming error, expected to find a peer in didWritePartialDataOfLength")
+            return
+        }
+        self.scheduleNextKeepaliveTimer(peer)
+    }
+    
     public func socket(sock: GCDAsyncSocket, shouldTimeoutReadWithTag tag: Int, elapsed: NSTimeInterval, bytesDone length: UInt) -> NSTimeInterval {
-        NSLog("BluepeerObject: socket timed out waiting for read. Tag: \(tag). Disconnecting.")
-        sock.disconnect()
-        return 0
+        return self.calcTimeExtension(sock, tag: tag)
     }
     
     public func socket(sock: GCDAsyncSocket, shouldTimeoutWriteWithTag tag: Int, elapsed: NSTimeInterval, bytesDone length: UInt) -> NSTimeInterval {
-        NSLog("BluepeerObject: socket timed out waiting for write. Tag: \(tag). Disconnecting.")
-        sock.disconnect()
-        return 0
+        return self.calcTimeExtension(sock, tag: tag)
+    }
+    
+    public func calcTimeExtension(sock: GCDAsyncSocket, tag: Int) -> NSTimeInterval {
+        guard let peer = sock.peer else {
+            assert(false, "BluepeerObject: programming error, expected to find a peer")
+            return 0
+        }
+        
+        let timeSinceLastData = abs(peer.lastReceivedOrSentData.timeIntervalSinceNow)
+        if timeSinceLastData > Timeouts.HEADER.rawValue {
+            // timeout!
+            NSLog("BluepeerObject: socket timed out waiting for read/write. Tag: \(tag). Disconnecting.")
+            sock.disconnect()
+            return 0
+        } else {
+            // extend
+            let retval: NSTimeInterval = Timeouts.HEADER.rawValue / 3.0
+            NSLog("BluepeerObject: extending socket timeout by \(retval)s bc I saw data \(timeSinceLastData)s ago")
+            return retval
+        }
     }
 }
 
