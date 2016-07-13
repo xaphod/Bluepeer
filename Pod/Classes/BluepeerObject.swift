@@ -86,6 +86,7 @@ import HHServices
 //        str = String(str.characters.filter { acceptableChars.containsCharacter($0) })
 //        return Int.init(str)!
     }
+    public var keepAliveTimer: NSTimer?
 }
 
 @objc public protocol BluepeerSessionManagerDelegate {
@@ -148,6 +149,7 @@ import HHServices
         }
     }
     let headerTerminator: NSData = "\r\n\r\n".dataUsingEncoding(NSUTF8StringEncoding)! // same as HTTP. But header content here is just a number, representing the byte count of the incoming nsdata.
+    let keepAliveHeader: NSData = "0 ! 0 ! 0 ! 0 ! 0 ! 0 ! 0 ! ".dataUsingEncoding(NSUTF8StringEncoding)! // A special header kept to avoid timeouts
     let socketQueue = dispatch_queue_create("xaphod.bluepeer.socketQueue", nil)
     
     enum DataTag: Int {
@@ -159,7 +161,7 @@ import HHServices
     }
     
     enum Timeouts: Double {
-        case HEADER = 20
+        case HEADER = 40 // keepAlive packets (32bytes) will be sent every HEADER-10 seconds
         case BODY = 90
     }
     
@@ -188,6 +190,7 @@ import HHServices
     
     deinit {
         NSNotificationCenter.defaultCenter().removeObserver(self)
+        self.killAllKeepAliveTimers()
     }
     
     // Note: only disconnect is handled. My delegate is expected to reconnect if needed.
@@ -208,6 +211,7 @@ import HHServices
             peer.socket = nil
             peer.state = .NotConnected
         }
+        self.killAllKeepAliveTimers()
     }
     
     public func connectedRoleCount(role: RoleType) -> Int {
@@ -333,6 +337,47 @@ import HHServices
             }
         }
     }
+
+    func sendDataInternal(peer: BPPeer, data: NSData) {
+        // send header first. Then separator. Then send body.
+        dispatch_async(dispatch_get_main_queue(), {
+            peer.keepAliveTimer?.invalidate()
+            peer.keepAliveTimer = nil
+        })
+        var length: UInt = UInt(data.length)
+        let headerdata = NSData.init(bytes: &length, length: sizeof(UInt))
+        peer.socket?.writeData(headerdata, withTimeout: Timeouts.HEADER.rawValue, tag: DataTag.TAG_WRITING.rawValue)
+        peer.socket?.writeData(self.headerTerminator, withTimeout: Timeouts.HEADER.rawValue, tag: DataTag.TAG_WRITING.rawValue)
+        peer.socket?.writeData(data, withTimeout: Timeouts.BODY.rawValue, tag: DataTag.TAG_WRITING.rawValue)
+        self.scheduleNextKeepAliveTimer(peer)
+    }
+    
+    func scheduleNextKeepAliveTimer(peer: BPPeer) {
+        dispatch_async(dispatch_get_main_queue(), {
+            peer.keepAliveTimer = NSTimer.scheduledTimerWithTimeInterval(Timeouts.HEADER.rawValue - 10.0, target: self, selector: #selector(self.keepAliveTimerFired), userInfo: ["peer":peer], repeats: false)
+        })
+    }
+    
+    func keepAliveTimerFired(timer: NSTimer) {
+        guard let peer = timer.userInfo?["peer"] as? BPPeer else {
+            assert(false, "I'm expecting keepAlive timers can always find their peers, ie the peers don't get erased")
+        }
+        if peer.state != .Connected {
+            NSLog("BluepeerObject: keepAlive timer finds peer isn't connected (no-op)")
+        } else {
+            peer.socket?.writeData(self.keepAliveHeader, withTimeout: Timeouts.HEADER.rawValue, tag: DataTag.TAG_WRITING.rawValue)
+            peer.socket?.writeData(self.headerTerminator, withTimeout: Timeouts.HEADER.rawValue, tag: DataTag.TAG_WRITING.rawValue)
+            NSLog("BluepeerObject: send keepAlive to \(peer.displayName) @ \(peer.IP)")
+            self.scheduleNextKeepAliveTimer(peer)
+        }
+    }
+    
+    func killAllKeepAliveTimers() {
+        for peer in self.peers {
+            peer.keepAliveTimer?.invalidate()
+            peer.keepAliveTimer = nil
+        }
+    }
     
     func dispatch_on_delegate_queue(block: dispatch_block_t) {
         if let queue = self.delegateQueue {
@@ -340,15 +385,6 @@ import HHServices
         } else {
             dispatch_async(dispatch_get_main_queue(), block)
         }
-    }
-    
-    func sendDataInternal(peer: BPPeer, data: NSData) {
-        // send header first. Then separator. Then send body.
-        var length: UInt = UInt(data.length)
-        let headerdata = NSData.init(bytes: &length, length: sizeof(UInt))
-        peer.socket?.writeData(headerdata, withTimeout: Timeouts.HEADER.rawValue, tag: DataTag.TAG_WRITING.rawValue)
-        peer.socket?.writeData(self.headerTerminator, withTimeout: Timeouts.HEADER.rawValue, tag: DataTag.TAG_WRITING.rawValue)
-        peer.socket?.writeData(data, withTimeout: Timeouts.BODY.rawValue, tag: DataTag.TAG_WRITING.rawValue)
     }
     
     public func getBrowser(completionBlock: Bool -> ()) -> UIViewController? {
@@ -627,6 +663,8 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
         }
         let oldState = peer.state
         peer.state = .NotConnected
+        peer.keepAliveTimer?.invalidate()
+        peer.keepAliveTimer = nil
         peer.socket = nil
         sock.delegate = nil
         NSLog("BluepeerObject: \(peer.displayName) @ \(peer.IP) disconnected")
@@ -664,10 +702,15 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
         } else if tag == DataTag.TAG_HEADER.rawValue {
             // first, strip the trailing headerTerminator
             let dataWithoutTerminator = data.subdataWithRange(NSRange.init(location: 0, length: data.length - self.headerTerminator.length))
-            var length: UInt = 0
-            dataWithoutTerminator.getBytes(&length, length: sizeof(UInt))
-            NSLog("BluepeerObject: got header, reading %lu bytes...", length)
-            sock.readDataToLength(length, withTimeout: Timeouts.BODY.rawValue, tag: DataTag.TAG_BODY.rawValue)
+            if dataWithoutTerminator.isEqualToData(self.keepAliveHeader) {
+                NSLog("BluepeerObject: got keepalive")
+                sock.readDataToData(self.headerTerminator, withTimeout: Timeouts.HEADER.rawValue, tag: DataTag.TAG_HEADER.rawValue)
+            } else {
+                var length: UInt = 0
+                dataWithoutTerminator.getBytes(&length, length: sizeof(UInt))
+                NSLog("BluepeerObject: got header, reading %lu bytes...", length)
+                sock.readDataToLength(length, withTimeout: Timeouts.BODY.rawValue, tag: DataTag.TAG_BODY.rawValue)
+            }
         } else if tag == DataTag.TAG_NAME.rawValue {
             
             var name = String.init(data: data, encoding: NSUTF8StringEncoding)

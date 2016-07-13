@@ -126,44 +126,52 @@ import xaphodObjCUtils
 extension BluepeerBrowserViewController: BluepeerSessionManagerDelegate {
     
     public func peerDidConnect(peerRole: RoleType, peer: BPPeer) {
-        NSLog("BluepeerBrowserVC: connected, dismissing.")
-        self.progressView?.dismissWithAnimation(false)
-        self.progressView = nil
-        self.lastTimerStarted = nil
-        self.timer?.invalidate()
-        self.timer = nil
-
-        self.dismissViewControllerAnimated(true, completion: {
-            self.browserCompletionBlock?(true)
+        dispatch_async(dispatch_get_main_queue(), {
+            NSLog("BluepeerBrowserVC: connected, dismissing.")
+            self.progressView?.dismissWithAnimation(false)
+            self.progressView = nil
+            self.lastTimerStarted = nil
+            self.timer?.invalidate()
+            self.timer = nil
+            
+            self.dismissViewControllerAnimated(true, completion: {
+                self.browserCompletionBlock?(true)
+            })
         })
     }
     
     public func peerConnectionAttemptFailed(peerRole: RoleType, peer: BPPeer, isAuthRejection: Bool) {
-        self.progressView?.dismissWithAnimation(false)
-        self.progressView = nil
-        self.lastTimerStarted = nil
-        self.timer?.invalidate()
-        self.timer = nil
-        
-        self.dismissViewControllerAnimated(true, completion: {
-            self.browserCompletionBlock?(false)
+        dispatch_async(dispatch_get_main_queue(), {
+            self.progressView?.dismissWithAnimation(false)
+            self.progressView = nil
+            self.lastTimerStarted = nil
+            self.timer?.invalidate()
+            self.timer = nil
+            
+            self.dismissViewControllerAnimated(true, completion: {
+                self.browserCompletionBlock?(false)
+            })
         })
     }
     
     public func browserFoundPeer(role: RoleType, peer: BPPeer, inviteBlock: (connect: Bool, timeoutForInvite: NSTimeInterval) -> Void) {
-        self.peers.append((peer: peer, inviteBlock: inviteBlock))
-        self.tableView.reloadData()
+        dispatch_async(dispatch_get_main_queue(), {
+            self.peers.append((peer: peer, inviteBlock: inviteBlock))
+            self.tableView.reloadData()
+        })
     }
     
     public func browserLostPeer(role: RoleType, peer: BPPeer) {
-        self.progressView?.dismissWithAnimation(false)
-        self.progressView = nil
-        self.lastTimerStarted = nil
-        self.timer?.invalidate()
-        self.timer = nil
-        if let index = self.peers.indexOf({$0.0 == peer}) {
-            self.peers.removeAtIndex(index)
-            self.tableView.reloadData()
-        }
+        dispatch_async(dispatch_get_main_queue(), {
+            self.progressView?.dismissWithAnimation(false)
+            self.progressView = nil
+            self.lastTimerStarted = nil
+            self.timer?.invalidate()
+            self.timer = nil
+            if let index = self.peers.indexOf({$0.0 == peer}) {
+                self.peers.removeAtIndex(index)
+                self.tableView.reloadData()
+            }
+        })
     }
 }
