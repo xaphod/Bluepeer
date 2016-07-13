@@ -342,7 +342,7 @@ import HHServices
     func sendDataInternal(peer: BPPeer, data: NSData) {
         // send header first. Then separator. Then send body.
         var length: UInt = UInt(data.length)
-        var senddata = NSMutableData.init(bytes: &length, length: sizeof(UInt))
+        let senddata = NSMutableData.init(bytes: &length, length: sizeof(UInt))
         senddata.appendData(self.headerTerminator)
         senddata.appendData(data)
         peer.socket?.writeData(senddata, withTimeout: Timeouts.BODY.rawValue, tag: DataTag.TAG_WRITING.rawValue)
@@ -378,7 +378,7 @@ import HHServices
         if peer.state != .Connected {
             NSLog("BluepeerObject: keepAlive timer finds peer isn't connected (no-op)")
         } else {
-            var senddata = NSMutableData.init(data: self.keepAliveHeader)
+            let senddata = NSMutableData.init(data: self.keepAliveHeader)
             senddata.appendData(self.headerTerminator)
             peer.socket?.writeData(senddata, withTimeout: Timeouts.HEADER.rawValue, tag: DataTag.TAG_WRITING.rawValue)
             NSLog("BluepeerObject: send keepAlive to \(peer.displayName) @ \(peer.IP)")
