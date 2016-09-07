@@ -684,7 +684,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
         switch oldState {
         case .Connected:
             self.dispatch_on_delegate_queue({
-                self.sessionDelegate?.peerDidDisconnect!(peer.role, peer: peer)
+                self.sessionDelegate?.peerDidDisconnect?(peer.role, peer: peer)
             })
         case .NotConnected:
             assert(false, "ERROR: state is being tracked wrong")
@@ -745,7 +745,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
                             sock.writeData(NSData.init(bytes: &zero, length: 1), withTimeout: Timeouts.HEADER.rawValue, tag: DataTag.TAG_WRITING.rawValue)
                             NSLog("... accepted (by my delegate)")
                             self.dispatch_on_delegate_queue({
-                                self.sessionDelegate?.peerDidConnect!(.Client, peer: peer)
+                                self.sessionDelegate?.peerDidConnect?(.Client, peer: peer)
                             })
                             sock.readDataToData(self.headerTerminator, withTimeout: Timeouts.HEADER.rawValue, tag: DataTag.TAG_HEADER.rawValue)
                         } else {
