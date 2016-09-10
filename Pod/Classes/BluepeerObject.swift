@@ -94,7 +94,7 @@ import HHServices
     @objc optional func peerDidConnect(_ peerRole: RoleType, peer: BPPeer)
     @objc optional func peerDidDisconnect(_ peerRole: RoleType, peer: BPPeer)
     @objc optional func peerConnectionAttemptFailed(_ peerRole: RoleType, peer: BPPeer?, isAuthRejection: Bool)
-    @objc optional func peerConnectionRequest(_ peer: BPPeer, invitationHandler: (Bool) -> Void) // was named: sessionConnectionRequest
+    @objc optional func peerConnectionRequest(_ peer: BPPeer, invitationHandler: @escaping (Bool) -> Void) // was named: sessionConnectionRequest
     @objc optional func browserFoundPeer(_ role: RoleType, peer: BPPeer, inviteBlock: @escaping (_ connect: Bool, _ timeoutForInvite: TimeInterval) -> Void)
     @objc optional func browserLostPeer(_ role: RoleType, peer: BPPeer)
 }
