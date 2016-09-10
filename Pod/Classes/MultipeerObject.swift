@@ -11,57 +11,57 @@ import MultipeerConnectivity
 import CoreBluetooth
 
 @objc public protocol MultipeerSessionManagerDelegate {
-    optional func peerDidConnect(session: MCSession?, peerRole: RoleType, peer: MCPeerID)
-    optional func peerDidDisconnect(session: MCSession?, peerRole: RoleType, peer: MCPeerID)
-    optional func peerConnectionAttemptFailed(session: MCSession?, peerRole: RoleType, peer: MCPeerID)
-    optional func sessionConnectionRequest(session: MCSession, peer: MCPeerID, context: NSData?, invitationHandler: (Bool, MCSession) -> Void)
-    optional func browserFoundPeer(role: RoleType, peer: MCPeerID, discoveryInfo: [String : String]?, inviteBlock: (timeoutForInvite: NSTimeInterval) -> Void)
+    @objc optional func peerDidConnect(_ session: MCSession?, peerRole: RoleType, peer: MCPeerID)
+    @objc optional func peerDidDisconnect(_ session: MCSession?, peerRole: RoleType, peer: MCPeerID)
+    @objc optional func peerConnectionAttemptFailed(_ session: MCSession?, peerRole: RoleType, peer: MCPeerID)
+    @objc optional func sessionConnectionRequest(_ session: MCSession, peer: MCPeerID, context: Data?, invitationHandler: (Bool, MCSession) -> Void)
+    @objc optional func browserFoundPeer(_ role: RoleType, peer: MCPeerID, discoveryInfo: [String : String]?, inviteBlock: (_ timeoutForInvite: TimeInterval) -> Void)
 }
 
 @objc public protocol MultipeerDataDelegate {
-    func didReceiveData(data: NSData, fromPeer peerID: MCPeerID)
-    optional func failedToStartAdvertising(error: NSError)
-    optional func failedToStartBrowsing(error: NSError)
+    func didReceiveData(_ data: Data, fromPeer peerID: MCPeerID)
+    @objc optional func failedToStartAdvertising(_ error: NSError)
+    @objc optional func failedToStartBrowsing(_ error: NSError)
 }
 
-@objc public class MultipeerObject: NSObject, MCNearbyServiceAdvertiserDelegate, MCSessionDelegate, MCBrowserViewControllerDelegate, CBPeripheralManagerDelegate, MCNearbyServiceBrowserDelegate {
+@objc open class MultipeerObject: NSObject, MCNearbyServiceAdvertiserDelegate, MCSessionDelegate, MCBrowserViewControllerDelegate, CBPeripheralManagerDelegate, MCNearbyServiceBrowserDelegate {
     
-    var delegateQueue: dispatch_queue_t?
-    public var serviceType: String
+    var delegateQueue: DispatchQueue?
+    open var serviceType: String
     var myID: MCPeerID
     var versionString: String = "unknown"
     var advertiser: MCNearbyServiceAdvertiser?
     var browser: MCNearbyServiceBrowser?
     var activeSession: MCSession
-    weak public var sessionDelegate: MultipeerSessionManagerDelegate?
-    weak public var dataDelegate: MultipeerDataDelegate?
-    public var peers: [MCPeerID:(role: RoleType, state: MCSessionState)]? = [:]
-    public var bluetoothState : BluetoothState = .Unknown
-    var browserCompletionBlock: ((success: Bool) -> Void)?
+    weak open var sessionDelegate: MultipeerSessionManagerDelegate?
+    weak open var dataDelegate: MultipeerDataDelegate?
+    open var peers: [MCPeerID:(role: RoleType, state: MCSessionState)]? = [:]
+    open var bluetoothState : BluetoothState = .unknown
+    var browserCompletionBlock: ((_ success: Bool) -> Void)?
     var bluetoothPeripheralManager: CBPeripheralManager
-    public var bluetoothBlock: ((bluetoothState: BluetoothState) -> Void)?
-    public var disconnectOnWillResignActive: Bool = false {
+    open var bluetoothBlock: ((_ bluetoothState: BluetoothState) -> Void)?
+    open var disconnectOnWillResignActive: Bool = false {
         didSet {
             if disconnectOnWillResignActive {
-                NSNotificationCenter.defaultCenter().addObserver(self, selector: #selector(willResignActive), name: UIApplicationWillResignActiveNotification, object: nil)
+                NotificationCenter.default.addObserver(self, selector: #selector(willResignActive), name: NSNotification.Name.UIApplicationWillResignActive, object: nil)
             } else {
-                NSNotificationCenter.defaultCenter().removeObserver(self, name: UIApplicationWillResignActiveNotification, object: nil)
+                NotificationCenter.default.removeObserver(self, name: NSNotification.Name.UIApplicationWillResignActive, object: nil)
             }
         }
     }
     
     // if queue isn't given, main queue is used
-    public init(serviceType: String, displayName:String?, encryptionPreference: MCEncryptionPreference, queue:dispatch_queue_t?, bluetoothBlock: ((bluetoothState: BluetoothState)->Void)?) { // serviceType must be 1-15 chars, only a-z0-9 and hyphen, eg "xd-blueprint"
+    public init(serviceType: String, displayName:String?, encryptionPreference: MCEncryptionPreference, queue:DispatchQueue?, bluetoothBlock: ((_ bluetoothState: BluetoothState)->Void)?) { // serviceType must be 1-15 chars, only a-z0-9 and hyphen, eg "xd-blueprint"
         self.serviceType = serviceType
         self.delegateQueue = queue
         self.bluetoothPeripheralManager = CBPeripheralManager.init(delegate: nil, queue: nil, options: [CBCentralManagerOptionShowPowerAlertKey:0])
         if let name = displayName {
             myID = MCPeerID.init(displayName: name)
         } else {
-            myID = MCPeerID.init(displayName: UIDevice.currentDevice().name)
+            myID = MCPeerID.init(displayName: UIDevice.current.name)
         }
         
-        if let bundleVersionString = NSBundle.mainBundle().infoDictionary?["CFBundleVersion"] as? String {
+        if let bundleVersionString = Bundle.main.infoDictionary?["CFBundleVersion"] as? String {
             versionString = bundleVersionString
         }
         self.activeSession = MCSession.init(peer: self.myID, securityIdentity: nil, encryptionPreference: encryptionPreference)
@@ -75,7 +75,7 @@ import CoreBluetooth
     }
     
     deinit {
-        NSNotificationCenter.defaultCenter().removeObserver(self)
+        NotificationCenter.default.removeObserver(self)
     }
     
     // Note: only disconnect is handled. My delegate is expected to reconnect if needed.
@@ -88,25 +88,25 @@ import CoreBluetooth
         sessionDelegate = nil
     }
 
-    public func disconnectSession() {
+    open func disconnectSession() {
         self.activeSession.disconnect()
     }
     
-    public func connectedRoleCount(role: RoleType) -> Int {
+    open func connectedRoleCount(_ role: RoleType) -> Int {
         guard let _ = self.peers else {
             return 0
         }
-        return self.peers!.filter({ $0.1.role == role && $0.1.state == .Connected }).count
+        return self.peers!.filter({ $0.1.role == role && $0.1.state == .connected }).count
     }
     
-    public func startAdvertising(role: RoleType) {
-        advertiser = MCNearbyServiceAdvertiser.init(peer: myID, discoveryInfo: ["version":versionString, "role":(role == .Server ? "Server" : "Client")], serviceType: serviceType)
+    open func startAdvertising(_ role: RoleType) {
+        advertiser = MCNearbyServiceAdvertiser.init(peer: myID, discoveryInfo: ["version":versionString, "role":(role == .server ? "Server" : "Client")], serviceType: serviceType)
         advertiser?.delegate = self;
         advertiser?.startAdvertisingPeer()
-        NSLog("Multipeer: now advertising as role \(role == .Server ? "Server" : "Client") for service \(serviceType)")
+        NSLog("Multipeer: now advertising as role \(role == .server ? "Server" : "Client") for service \(serviceType)")
     }
     
-    public func stopAdvertising() {
+    open func stopAdvertising() {
         if let advertiser = self.advertiser {
             advertiser.stopAdvertisingPeer()
             advertiser.delegate = nil
@@ -115,14 +115,14 @@ import CoreBluetooth
         }
     }
     
-    public func startBrowsing() {
+    open func startBrowsing() {
         self.browser = MCNearbyServiceBrowser.init(peer: myID, serviceType: serviceType)
         self.browser?.delegate = self
         self.browser?.startBrowsingForPeers()
         NSLog("Multipeer: now browsing for service \(serviceType)")
     }
     
-    public func stopBrowsing() {
+    open func stopBrowsing() {
         self.browser?.stopBrowsingForPeers()
         self.browser?.delegate = nil
         self.browser = nil
@@ -130,17 +130,17 @@ import CoreBluetooth
     
     
     // If specified, peers takes precedence.
-    public func sendData(datas: [NSData]!, toPeers:[MCPeerID]?, toRole: RoleType) throws {
+    open func sendData(_ datas: [Data]!, toPeers:[MCPeerID]?, toRole: RoleType) throws {
         if let peers = self.peers {
             var targetPeers: [MCPeerID]
             if let toPeers = toPeers {
                 targetPeers = toPeers
             } else {
                 let peersArray: [(MCPeerID, (role: RoleType, state: MCSessionState))] = peers.filter({
-                    if toRole != .All {
-                        return $0.1.role == toRole && $0.1.state == .Connected
+                    if toRole != .all {
+                        return $0.1.role == toRole && $0.1.state == .connected
                     } else {
-                        return $0.1.state == .Connected
+                        return $0.1.state == .connected
                     }
                 })
                 targetPeers = peersArray.map({$0.0})
@@ -148,30 +148,30 @@ import CoreBluetooth
             
             for data in datas {
                 NSLog("Multipeer sending to %d peers", targetPeers.count)
-                try self.activeSession.sendData(data, toPeers: targetPeers, withMode: .Reliable)
+                try self.activeSession.send(data, toPeers: targetPeers, with: .reliable)
             }
         }
     }
     
-    func registerPeer(peerID: MCPeerID, info: [String : String]?) -> RoleType {
-        var retval = RoleType.Unknown
+    func registerPeer(_ peerID: MCPeerID, info: [String : String]?) -> RoleType {
+        var retval = RoleType.unknown
         if let info = info {
             if let role = info["role"] {
                 // save roles for later!
                 if let _ = self.peers {
                     switch role {
                     case "Server":
-                        retval = .Server
+                        retval = .server
                         NSLog("Multipeer Browser found a server: \(peerID.displayName)")
                     case "Client":
-                        retval = .Client
+                        retval = .client
                         NSLog("Multipeer Browser found a client: \(peerID.displayName)")
                     default:
-                        retval = .Client
+                        retval = .client
                         NSLog("Multipeer Browser found unknown type, presuming client!!!: \(peerID.displayName)")
                     }
                     
-                    self.peers!.updateValue((retval, .NotConnected), forKey: peerID)
+                    self.peers!.updateValue((retval, .notConnected), forKey: peerID)
                 }
             }
             if let ver = info["version"] {
@@ -187,7 +187,7 @@ import CoreBluetooth
         return retval
     }
     
-    public func getBrowser(browserCompletionBlock: ((success: Bool) -> Void)?) -> MCBrowserViewController? {
+    open func getBrowser(_ browserCompletionBlock: ((_ success: Bool) -> Void)?) -> MCBrowserViewController? {
         self.browserCompletionBlock = browserCompletionBlock
         let browserViewController = MCBrowserViewController.init(serviceType: self.serviceType, session: self.activeSession)
         browserViewController.delegate = self
@@ -195,32 +195,32 @@ import CoreBluetooth
     }
     
     // MCNearbyServiceBrowserDelegate
-    public func browser(browser: MCNearbyServiceBrowser, foundPeer peerID: MCPeerID, withDiscoveryInfo info: [String : String]?) {
+    open func browser(_ browser: MCNearbyServiceBrowser, foundPeer peerID: MCPeerID, withDiscoveryInfo info: [String : String]?) {
         let role = self.registerPeer(peerID, info: info)
         
         if let delegate = self.sessionDelegate {
             self.dispatch_on_delegate_queue({
                 delegate.browserFoundPeer?(role, peer: peerID, discoveryInfo: info, inviteBlock: { (timeoutForInvite) in
-                    browser.invitePeer(peerID, toSession: self.activeSession, withContext: nil, timeout: timeoutForInvite)
+                    browser.invitePeer(peerID, to: self.activeSession, withContext: nil, timeout: timeoutForInvite)
                 })
             })
         }
     }
     
-    public func browser(browser: MCNearbyServiceBrowser, lostPeer peerID: MCPeerID) {
+    open func browser(_ browser: MCNearbyServiceBrowser, lostPeer peerID: MCPeerID) {
         NSLog("Multipeer lost peer: \(peerID.displayName)")
         if var peers = self.peers {
             if let oldVal = peers[peerID] {
-                peers.updateValue((oldVal.role, .NotConnected), forKey: peerID)
+                peers.updateValue((oldVal.role, .notConnected), forKey: peerID)
             }
         }
     }
     
-    public func browser(browser: MCNearbyServiceBrowser, didNotStartBrowsingForPeers error: NSError) {
+    open func browser(_ browser: MCNearbyServiceBrowser, didNotStartBrowsingForPeers error: Error) {
         NSLog("Multipeer browser failed to start: \(error)")
         if let delegate = self.dataDelegate {
             self.dispatch_on_delegate_queue({
-                delegate.failedToStartBrowsing?(error)
+                delegate.failedToStartBrowsing?(error as NSError)
             })
         }
     }
@@ -228,16 +228,16 @@ import CoreBluetooth
     
     // MCNearbyServiceAdvertiserDelegate
     
-    public func advertiser(advertiser: MCNearbyServiceAdvertiser, didNotStartAdvertisingPeer error: NSError) {
+    open func advertiser(_ advertiser: MCNearbyServiceAdvertiser, didNotStartAdvertisingPeer error: Error) {
         NSLog("ERROR: could not start advertising. Error: \(error)")
         if let delegate = self.dataDelegate {
             self.dispatch_on_delegate_queue({
-                delegate.failedToStartAdvertising?(error)
+                delegate.failedToStartAdvertising?(error as NSError)
             })
         }
     }
     
-    public func advertiser(advertiser: MCNearbyServiceAdvertiser, didReceiveInvitationFromPeer peerID: MCPeerID, withContext context: NSData?, invitationHandler: (Bool, MCSession) -> Void) {
+    open func advertiser(_ advertiser: MCNearbyServiceAdvertiser, didReceiveInvitationFromPeer peerID: MCPeerID, withContext context: Data?, invitationHandler: @escaping (Bool, MCSession?) -> Void) {
         NSLog("Invitation received from peer \(peerID.displayName)")
         
         if let delegate = self.sessionDelegate {
@@ -250,7 +250,7 @@ import CoreBluetooth
     
     // MCSessionDelegate
     
-    public func session(session: MCSession, didReceiveData data: NSData, fromPeer peerID: MCPeerID) {
+    open func session(_ session: MCSession, didReceive data: Data, fromPeer peerID: MCPeerID) {
         // TODO: BUG - when two clients print at same time, their data gets mixed up together somehow
         NSLog("\(#function) - peer: \(peerID.displayName)")
         if let delegate = self.dataDelegate {
@@ -260,97 +260,97 @@ import CoreBluetooth
         }
     }
     
-    public func session(session: MCSession, peer peerID: MCPeerID, didChangeState state: MCSessionState) {
+    open func session(_ session: MCSession, peer peerID: MCPeerID, didChange state: MCSessionState) {
         self.dispatch_on_delegate_queue({
-            let stateString = state == .Connected ? "Connected" : (state == .Connecting ? "Connecting" : "Not connected")
+            let stateString = state == .connected ? "Connected" : (state == .connecting ? "Connecting" : "Not connected")
             NSLog("\(#function) - peer: \(peerID.displayName), state: \(stateString)")
             
-            if (state == .Connected) {
+            if (state == .connected) {
                 if self.peers![peerID] == nil {
                     // if we are connected, and it's not in the dict, then we are a server, so it is a client
                     NSLog("Adding new connected peer \(peerID.displayName), assuming it is a CLIENT")
-                    self.peers![peerID] = (.Client, .Connected)
+                    self.peers![peerID] = (.client, .connected)
                 } else {
-                    NSLog("Marking existing peer \(peerID.displayName) as connected. Role = \((self.peers![peerID]!.role == .Server ? "Server" : "Client"))")
-                    self.peers![peerID]?.state = .Connected
+                    NSLog("Marking existing peer \(peerID.displayName) as connected. Role = \((self.peers![peerID]!.role == .server ? "Server" : "Client"))")
+                    self.peers![peerID]?.state = .connected
                 }
                 
                 if let delegate = self.sessionDelegate {
                     delegate.peerDidConnect?(session, peerRole: self.peers![peerID]!.role, peer: peerID)
                 }
-            } else if (state == .NotConnected) {
+            } else if (state == .notConnected) {
                 
                 if self.peers![peerID] != nil {
                     let oldState = self.peers![peerID]!.state
                     let role = self.peers![peerID]!.role
-                    if (oldState == .Connected) {
+                    if (oldState == .connected) {
                         self.peers![peerID] = nil
                         if let delegate = self.sessionDelegate {
                             delegate.peerDidDisconnect?(session, peerRole: role, peer: peerID)
                         }
                     } else {
                         self.peers![peerID]!.state = state
-                        if (oldState == .Connecting) {
+                        if (oldState == .connecting) {
                             if let delegate = self.sessionDelegate {
                                 delegate.peerConnectionAttemptFailed?(session, peerRole: role, peer: peerID)
                             }
                         }
                     }
                 }
-            } else if (state == .Connecting) {
-                self.peers![peerID]?.state = .Connecting
+            } else if (state == .connecting) {
+                self.peers![peerID]?.state = .connecting
             }
         })
     }
     
-    public func session(session: MCSession, didReceiveStream stream: NSInputStream, withName streamName: String, fromPeer peerID: MCPeerID) {
+    open func session(_ session: MCSession, didReceive stream: InputStream, withName streamName: String, fromPeer peerID: MCPeerID) {
         NSLog("\(#function) - peer: \(peerID.displayName)")
     }
     
-    public func session(session: MCSession, didStartReceivingResourceWithName resourceName: String, fromPeer peerID: MCPeerID, withProgress progress: NSProgress) {
+    open func session(_ session: MCSession, didStartReceivingResourceWithName resourceName: String, fromPeer peerID: MCPeerID, with progress: Progress) {
         NSLog("\(#function) - peer: \(peerID.displayName)")
     }
     
-    public func session(session: MCSession, didFinishReceivingResourceWithName resourceName: String, fromPeer peerID: MCPeerID, atURL localURL: NSURL, withError error: NSError?) {
+    open func session(_ session: MCSession, didFinishReceivingResourceWithName resourceName: String, fromPeer peerID: MCPeerID, at localURL: URL, withError error: Error?) {
         NSLog("\(#function) - peer: \(peerID.displayName)")
     }
     
     
     // MCBrowserViewControllerDelegate
-    public func browserViewControllerDidFinish(browserViewController: MCBrowserViewController) {
+    open func browserViewControllerDidFinish(_ browserViewController: MCBrowserViewController) {
         if let completionBlock = self.browserCompletionBlock {
-            dispatch_async(dispatch_get_main_queue(), {
-                completionBlock(success: true)
+            DispatchQueue.main.async(execute: {
+                completionBlock(true)
                 self.browserCompletionBlock = nil
             })
         }
     }
     
-    public func browserViewControllerWasCancelled(browserViewController: MCBrowserViewController) {
+    open func browserViewControllerWasCancelled(_ browserViewController: MCBrowserViewController) {
         if let completionBlock = self.browserCompletionBlock {
-            dispatch_async(dispatch_get_main_queue(), {
-                completionBlock(success: false)
+            DispatchQueue.main.async(execute: {
+                completionBlock(false)
                 self.browserCompletionBlock = nil
             })
         }
     }
     
-    public func browserViewController(browserViewController: MCBrowserViewController, shouldPresentNearbyPeer peerID: MCPeerID, withDiscoveryInfo info: [String : String]?) -> Bool {
+    open func browserViewController(_ browserViewController: MCBrowserViewController, shouldPresentNearbyPeer peerID: MCPeerID, withDiscoveryInfo info: [String : String]?) -> Bool {
         
         var retval = false
         
         let work = {
             let role = self.registerPeer(peerID, info: info)
-            if (role == .Server) {
+            if (role == .server) {
                 retval = true
             }
         }
         
-        if (NSThread.currentThread().isMainThread) {
+        if (Thread.current.isMainThread) {
             work()
             return retval
         } else {
-            dispatch_sync(dispatch_get_main_queue(), {
+            DispatchQueue.main.sync(execute: {
                 work()
             })
             return retval
@@ -359,36 +359,36 @@ import CoreBluetooth
     
     // CBPeripheralManagerDelegate
     
-    public func peripheralManagerDidUpdateState(peripheral: CBPeripheralManager) {
+    open func peripheralManagerDidUpdateState(_ peripheral: CBPeripheralManager) {
         NSLog("Bluetooth status: ")
         switch (self.bluetoothPeripheralManager.state) {
-        case .Unknown:
+        case .unknown:
             NSLog("Unknown")
-            self.bluetoothState = .Unknown
-        case .Resetting:
+            self.bluetoothState = .unknown
+        case .resetting:
             NSLog("Resetting")
-            self.bluetoothState = .Other
-        case .Unsupported:
+            self.bluetoothState = .other
+        case .unsupported:
             NSLog("Unsupported")
-            self.bluetoothState = .Other
-        case .Unauthorized:
+            self.bluetoothState = .other
+        case .unauthorized:
             NSLog("Unauthorized")
-            self.bluetoothState = .Other
-        case .PoweredOff:
+            self.bluetoothState = .other
+        case .poweredOff:
             NSLog("PoweredOff")
-            self.bluetoothState = .PoweredOff
-        case .PoweredOn:
+            self.bluetoothState = .poweredOff
+        case .poweredOn:
             NSLog("PoweredOn")
-            self.bluetoothState = .PoweredOn
+            self.bluetoothState = .poweredOn
         }
-        self.bluetoothBlock?(bluetoothState: self.bluetoothState)
+        self.bluetoothBlock?(self.bluetoothState)
     }
     
-    func dispatch_on_delegate_queue(block: dispatch_block_t) {
+    func dispatch_on_delegate_queue(_ block: @escaping ()->()) {
         if let queue = self.delegateQueue {
-            dispatch_async(queue, block)
+            queue.async(execute: block)
         } else {
-            dispatch_async(dispatch_get_main_queue(), block)
+            DispatchQueue.main.async(execute: block)
         }
     }
 

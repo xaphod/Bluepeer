@@ -8,39 +8,39 @@
 import UIKit
 
 enum CellType {
-    case LoadingRow
-    case NormalRow
+    case loadingRow
+    case normalRow
 }
 
-@objc public class BluepeerRowTableViewCell: UITableViewCell {
+@objc open class BluepeerRowTableViewCell: UITableViewCell {
     
-    var celltype: CellType = .NormalRow
+    var celltype: CellType = .normalRow
     var peer: BPPeer?
 
     @IBOutlet weak var mainLabel: UILabel!
     @IBOutlet weak var activityIndicator: UIActivityIndicatorView!
     
-    override public func awakeFromNib() {
+    override open func awakeFromNib() {
         super.awakeFromNib()
         // Initialization code
     }
 
-    override public func setSelected(selected: Bool, animated: Bool) {
+    override open func setSelected(_ selected: Bool, animated: Bool) {
         super.setSelected(selected, animated: animated)
 
         // Configure the view for the selected state
     }
     
-    public func updateDisplay() {
+    open func updateDisplay() {
         switch celltype {
-        case .LoadingRow:
+        case .loadingRow:
             self.mainLabel.text = "Searching..."
-            self.selectionStyle = .None
+            self.selectionStyle = .none
             self.activityIndicator.startAnimating()
             
-        case .NormalRow:
+        case .normalRow:
             self.mainLabel.text = peer != nil ? peer!.displayName : "Unknown"
-            self.selectionStyle = .Default
+            self.selectionStyle = .default
         }
     }
 }
