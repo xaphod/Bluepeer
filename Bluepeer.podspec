@@ -9,7 +9,7 @@
 
 Pod::Spec.new do |s|
   s.name             = "Bluepeer"
-  s.version          = "1.0.12"
+  s.version          = "1.0.13"
   s.summary          = "Provides P2P (adhoc) Bluetooth and wifi networking at high-level"
   s.description      = <<-DESC
 			Provides P2P (adhoc) Bluetooth and wifi networking at high-level. Uses low-level frameworks like HHServices to have more control than Multipeer and NSNetService.
@@ -26,7 +26,7 @@ Pod::Spec.new do |s|
     'Bluepeer' => ['Pod/Assets/*.{lproj,storyboard}']
   }
   s.dependency 'CocoaAsyncSocket', '>= 7.4.0'
-  s.dependency 'HHServices', '>= 1.0.2'
+  s.dependency 'HHServices', '>= 2.0'
   s.dependency 'xaphodObjCUtils'
   #s.public_header_files = 'Pod/Classes/*.h'
   #s.xcconfig = {'OTHER_LDFLAGS' => '-ObjC -all_load'}

@@ -7,24 +7,14 @@ PODS:
 
 DEPENDENCIES:
   - CocoaAsyncSocket
-  - HHServices (from `https://github.com/tolo/HHServices.git`, branch `develop`)
+  - HHServices
   - xaphodObjCUtils
-
-EXTERNAL SOURCES:
-  HHServices:
-    :branch: develop
-    :git: https://github.com/tolo/HHServices.git
-
-CHECKOUT OPTIONS:
-  HHServices:
-    :commit: ee15d372da3a9fc049d23bff3de6b4e5a26c3d87
-    :git: https://github.com/tolo/HHServices.git
 
 SPEC CHECKSUMS:
   CocoaAsyncSocket: 3baeb1ddd969f81cf9fca81053ae49ef2d1cbbfa
-  HHServices: ed5a239317fac28a733ab32bf03e8befe9b56656
+  HHServices: 817b40cd80baac48a9f46aeabded1ba1488875d7
   xaphodObjCUtils: 608252f99b771b0fe5696103038cffd8d84581d9
 
-PODFILE CHECKSUM: 64d0ebc2ca013fe82752e0f4dfdb22affb8201b6
+PODFILE CHECKSUM: 7a7021145581d65290f425aa929124cbd55e0596
 
-COCOAPODS: 1.0.1
+COCOAPODS: 1.1.0.rc.1
