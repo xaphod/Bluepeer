@@ -233,7 +233,7 @@ import HHServices
     
         // Could use the NSNetService version of this (TXTDATA maker), it'd be easier :)
         let swiftdict = ["role":"Server"] // assume I am a Server if I am told to start advertising
-        let cfdata: Unmanaged<CFData>? = CFNetServiceCreateTXTDataWithDictionary(kCFAllocatorDefault, swiftdict as! CFDictionary)
+        let cfdata: Unmanaged<CFData>? = CFNetServiceCreateTXTDataWithDictionary(kCFAllocatorDefault, swiftdict as CFDictionary)
         let txtdata = cfdata?.takeUnretainedValue()
         guard let _ = txtdata else {
             NSLog("BluepeerObject: ERROR could not create TXTDATA nsdata")
@@ -671,7 +671,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
         sock.readData(toLength: 1, withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_AUTH.rawValue)
     }
     
-    func socketDidDisconnect(_ sock: GCDAsyncSocket, withError err: NSError?) {
+    public func socketDidDisconnect(_ sock: GCDAsyncSocket, withError err: Error?) {
         guard let peer = sock.peer else {
             NSLog("BluepeerObject socketDidDisconnect: WARNING, expected to find a peer")
             sock.delegate = nil
