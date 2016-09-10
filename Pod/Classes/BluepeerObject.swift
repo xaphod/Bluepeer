@@ -8,10 +8,10 @@
 import Foundation
 import CoreBluetooth
 import CFNetwork
-import CocoaAsyncSocket
+import CocoaAsyncSocket // NOTE: requires pod CocoaAsyncSocket
 import HHServices
 
-// NOTE: requires pod CocoaAsyncSocket
+let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHITTY HACK! I HATE SWIFT TODAY!
 
 @objc public enum RoleType: Int, CustomStringConvertible {
     case unknown = 0
@@ -136,7 +136,6 @@ import HHServices
     weak open var sessionDelegate: BluepeerSessionManagerDelegate?
     weak open var dataDelegate: BluepeerDataDelegate?
     open var peers = Set<BPPeer>()
-    var servicesBeingResolved = Set<HHService>()
     open var bluetoothState : BluetoothState = .unknown
     var bluetoothPeripheralManager: CBPeripheralManager
     open var bluetoothBlock: ((_ bluetoothState: BluetoothState) -> Void)?
@@ -239,14 +238,19 @@ import HHServices
             NSLog("BluepeerObject: ERROR could not create TXTDATA nsdata")
             return
         }
-        self.publisher = HHServicePublisher.init(name: self.sanitizedDisplayName, type: self.serviceType, domain: "local.", txtData: txtdata as Data!, port: UInt(serverPort), includeP2P: true)
+        self.publisher = HHServicePublisher.init(name: self.sanitizedDisplayName, type: self.serviceType, domain: "local.", txtData: txtdata as Data!, port: UInt(serverPort))
         
         guard let publisher = self.publisher else {
             NSLog("BluepeerObject: could not create publisher")
             return
         }
         publisher.delegate = self
-        let starting = publisher.beginPublishOverBluetoothOnly(self.overBluetoothOnly)
+        var starting: Bool
+        if (self.overBluetoothOnly) {
+            starting = publisher.beginPublishOverBluetoothOnly()
+        } else {
+            starting = publisher.beginPublish()
+        }
         if !starting {
             NSLog("BluepeerObject ERROR: could not start advertising")
             self.publisher = nil
@@ -282,13 +286,17 @@ import HHServices
             return
         }
 
-        self.browser = HHServiceBrowser.init(type: self.serviceType, domain: "local.", includeP2P: true)
+        self.browser = HHServiceBrowser.init(type: self.serviceType, domain: "local.")
         guard let browser = self.browser else {
             NSLog("BluepeerObject: ERROR, could not create browser")
             return
         }
         browser.delegate = self
-        self.browsing = browser.beginBrowseOverBluetoothOnly(self.overBluetoothOnly)
+        if (self.overBluetoothOnly) {
+            self.browsing = browser.beginBrowseOverBluetoothOnly()
+        } else {
+            self.browsing = browser.beginBrowse()
+        }
         NSLog("BluepeerObject: now browsing")
     }
     
@@ -441,7 +449,7 @@ extension GCDAsyncSocket {
 }
 
 extension BluepeerObject : HHServicePublisherDelegate {
-    public func serviceDidPublish(_ servicePublisher: HHServicePublisher!) {
+    public func serviceDidPublish(_ servicePublisher: HHServicePublisher) {
         self.advertising = true
 
         // create serverSocket
@@ -452,6 +460,7 @@ extension BluepeerObject : HHServicePublisherDelegate {
         }
         
         self.serverSocket = GCDAsyncSocket.init(delegate: self, delegateQueue: socketQueue)
+        self.serverSocket?.isIPv4PreferredOverIPv6 = false
         guard let serverSocket = self.serverSocket else {
             NSLog("BluepeerObject: ERROR - Could not create serverSocket")
             return
@@ -467,41 +476,47 @@ extension BluepeerObject : HHServicePublisherDelegate {
         NSLog("BluepeerObject: now advertising for service \(serviceType)")
     }
     
-    public func serviceDidNotPublish(_ servicePublisher: HHServicePublisher!) {
+    public func serviceDidNotPublish(_ servicePublisher: HHServicePublisher) {
         self.advertising = false
         NSLog("BluepeerObject: ERROR: serviceDidNotPublish")
     }
 }
 
 extension BluepeerObject : HHServiceBrowserDelegate {
-    public func serviceBrowser(_ serviceBrowser: HHServiceBrowser!, didFind service: HHService!, moreComing: Bool) {
+    public func serviceBrowser(_ serviceBrowser: HHServiceBrowser, didFind service: HHService, moreComing: Bool) {
         if self.browsing == false {
             return
         }
         if service.type == self.serviceType {
             service.delegate = self
-            self.servicesBeingResolved.insert(service)
-            service.beginResolveOnlyOverBluetooth(self.overBluetoothOnly)
+            let prots = UInt32(kDNSServiceProtocol_IPv4 + kDNSServiceProtocol_IPv6)
+            if (self.overBluetoothOnly) {
+                service.beginResolve(kDNSServiceInterfaceIndexP2PSwift, includeP2P: true, addressLookupProtocols: prots)
+            } else {
+                service.beginResolve(UInt32(kDNSServiceInterfaceIndexAny), includeP2P: true, addressLookupProtocols: prots)
+            }
         }
     }
     
-    public func serviceBrowser(_ serviceBrowser: HHServiceBrowser!, didRemove service: HHService!, moreComing: Bool) {
+    public func serviceBrowser(_ serviceBrowser: HHServiceBrowser, didRemove service: HHService, moreComing: Bool) {
         NSLog("BluepeerObject: didRemoveService \(service.name)")
-        if service.name != nil {
-            let peer: BPPeer? = self.peers.filter({ $0.displayName == service.name }).first
-            if let peer = peer {
-                self.dispatch_on_delegate_queue({
-                    self.sessionDelegate?.browserLostPeer?(peer.role, peer: peer)
-                })
-            }
+        let peer: BPPeer? = self.peers.filter({ $0.displayName == service.name }).first
+        if let peer = peer {
+            self.dispatch_on_delegate_queue({
+                self.sessionDelegate?.browserLostPeer?(peer.role, peer: peer)
+            })
         }
     }
 }
 
 extension BluepeerObject : HHServiceDelegate {
-    public func serviceDidResolve(_ service: HHService!) {
-        self.servicesBeingResolved.remove(service)
+    public func serviceDidResolve(_ service: HHService, moreComing: Bool) {
         if self.browsing == false {
+            return
+        }
+        
+        if moreComing {
+            NSLog("BluepeerObject: moreComing, so waiting to get called again")
             return
         }
         
@@ -534,63 +549,84 @@ extension BluepeerObject : HHServiceDelegate {
             return
         }
         
-        guard var addressStr = service.resolvedIPAddresses.first as? String else {
-            NSLog("BluepeerObject: serviceDidResolve IGNORING service because could not get address")
-            return
-        }
-
-        if service.resolvedIPAddresses.count > 1 {
-            // Althoug DNS gets published via Bluetooth only if onlyBluetooth is set, can still see wifi IP addresses. So examine IPs and prefer bluetooth-looking IP if onlyBluetooth is set, otherwise stick with first one
-            var blueIP: String?
-            
-            for thisIP in service.resolvedIPAddresses {
-                if let thisIPStr = thisIP as? String {
-                    if thisIPStr.hasPrefix("169.254") { // WARNING: HARDCODED BLUETOOTH IP PREFIX FOR IOS
-                        blueIP = thisIPStr
-                        break
-                    }
-                }
-            }
-            if blueIP != nil && self.overBluetoothOnly {
-                NSLog("BluepeerObject: serviceDidResolve preferring 169.254.* Bluetooth IP since overBluetoothOnly is set")
-                addressStr = blueIP!
-            }
-        }
-        
-        guard var port = service.resolvedPortNumbers.first as? NSNumber else {
-            NSLog("BluepeerObject: serviceDidResolve IGNORING service because could not get port")
+        guard let hhaddresses: [HHAddressInfo] = service.resolvedAddressInfo else {
+            NSLog("BluepeerObject: serviceDidResolve IGNORING service because could not get resolvedAddressInfo")
             return
         }
         
-        if service.resolvedPortNumbers.count == service.resolvedIPAddresses.count {
-            var index: Int = 0
-            for i in (0..<service.resolvedIPAddresses.count) {
-                if (service.resolvedIPAddresses[i] as! String == addressStr) {
-                    index = i
-                    break
-                }
+        // assume en0 is wifi, and use the first address that is NOT that if we are bluetooth only
+        var wifiDevice: HHAddressInfo? = nil
+        var nonWifiDevice: HHAddressInfo? = nil
+        
+        for thisAddress in hhaddresses {
+            if (wifiDevice != nil && nonWifiDevice != nil) {
+                NSLog("BluepeerObject: WARNING, found three or more devices. Just using the first two...")
+                break
             }
-            
-            port = service.resolvedPortNumbers[index] as! NSNumber
+            if (thisAddress.interfaceName == "en0") {
+                wifiDevice = thisAddress
+            } else {
+                nonWifiDevice = thisAddress
+            }
+        }
+        
+        if (wifiDevice == nil && nonWifiDevice == nil) {
+            NSLog("BluepeerObject: ERROR, found no devices/addresses!")
+            return
+        }
+        
+        var device: HHAddressInfo
+        if (wifiDevice == nil) {
+            NSLog("BluepeerObject: WARNING, did not find wifi device en0!")
+            device = nonWifiDevice!
+        } else if (nonWifiDevice == nil) {
+            if (self.overBluetoothOnly) {
+                NSLog("BluepeerObject: WARNING, found no non-wifi device and bluetoothOnly was specified -- doing nothing!")
+                return
+            }
+            device = wifiDevice!
+        } else {
+            if (self.overBluetoothOnly) {
+                device = nonWifiDevice!
+            } else {
+                device = wifiDevice!
+            }
         }
         
         let newPeer = BPPeer.init()
         newPeer.role = role
         newPeer.displayName = service.name
-        newPeer.IP = addressStr
+        
+        let ipAndPort = device.addressAndPortString
+        guard let lastColonIndex = ipAndPort.range(of: ":", options: .backwards)?.lowerBound else {
+            NSLog("ERROR: unexpected return of IP address with port")
+            assert(false, "error")
+            return
+        }
+        let ip = ipAndPort.substring(to: lastColonIndex)
+        if ipAndPort.components(separatedBy: ":").count-1 > 1 {
+            // ipv6 - looks like [00:22:22.....]:port
+            newPeer.IP = ip.substring(with: Range(uncheckedBounds: (lower: ip.index(ip.startIndex, offsetBy: 1), upper: ip.index(ip.endIndex, offsetBy: -1))))
+        } else {
+            // ipv4 - looks like 10.1.2.3:port
+            newPeer.IP = ip
+        }
+        NSLog("BluepeerObject: newPeer.IP being set to %@", newPeer.IP)
         self.addPeer(newPeer)
         
         self.dispatch_on_delegate_queue({
-            delegate.browserFoundPeer!(role, peer: newPeer, inviteBlock: { (connect, timeoutForInvite) in
+            delegate.browserFoundPeer?(role, peer: newPeer, inviteBlock: { (connect, timeoutForInvite) in
                 self.stopBrowsing() // stop browsing once user has done something
                 if connect {
                     do {
                         NSLog("... trying to connect...")
                         newPeer.socket = GCDAsyncSocket.init(delegate: self, delegateQueue: self.socketQueue)
+                        newPeer.socket?.isIPv4PreferredOverIPv6 = false
                         newPeer.state = .connecting
-                        try newPeer.socket?.connect(toHost: addressStr, onPort: port.uint16Value, withTimeout: timeoutForInvite)
+                        let socketAddrData = Data.init(bytes: device.address, count: MemoryLayout<sockaddr>.size)
+                        try newPeer.socket?.connect(toAddress: socketAddrData, viaInterface: device.interfaceName, withTimeout: timeoutForInvite)
                     } catch {
-                        NSLog("BluepeerObject: could not start connectToAdddress.")
+                        NSLog("BluepeerObject: could not connect.")
                     }
                 } else {
                     NSLog("... got told NOT to connect.")
@@ -600,9 +636,8 @@ extension BluepeerObject : HHServiceDelegate {
         })
     }
     
-    public func serviceDidNotResolve(_ service: HHService!) {
+    public func serviceDidNotResolve(_ service: HHService) {
         NSLog("BluepeerObject: ERROR, service did not resolve: \(service.name)")
-        self.servicesBeingResolved.remove(service)
     }
     
     public func addPeer(_ newPeer: BPPeer) {
@@ -626,7 +661,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
                 NSLog("BluepeerObject: ERROR, accepted newSocket has no connectedHost (no-op)")
                 return
             }
-            NSLog("BluepeerObject: accepting new connection from \(newSocket.connectedHost)")
+            NSLog("BluepeerObject: accepting new connection. Setting newPeer.IP to \(connectedHost)")
             newSocket.delegate = self
             let newPeer = BPPeer.init()
             newPeer.state = .awaitingAuth

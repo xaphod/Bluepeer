@@ -8,6 +8,6 @@ source 'https://github.com/xaphod/podspecs.git'
   use_frameworks!
 
 pod 'xaphodObjCUtils'
-pod 'HHServices', '>= 1.0.2'
+pod 'HHServices', :git => 'https://github.com/tolo/HHServices.git', :branch => 'develop'
 pod 'CocoaAsyncSocket'
 end
