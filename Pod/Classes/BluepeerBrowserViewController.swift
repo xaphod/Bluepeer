@@ -13,7 +13,7 @@ import xaphodObjCUtils
     var bluepeerObject: BluepeerObject?
     var bluepeerSuperSessionDelegate: BluepeerSessionManagerDelegate?
     open var browserCompletionBlock: ((Bool) -> ())?
-    var peers: [(peer: BPPeer, inviteBlock: (_ connect: Bool, _ timeoutForInvite: TimeInterval) -> Void)] = []
+    var peers: [(peer: BPPeer, inviteBlock: (_ timeoutForInvite: TimeInterval) -> Void)] = []
     var progressView: XaphodProgressView?
     var lastTimerStarted: Date?
     var timer: Timer?
@@ -104,7 +104,7 @@ import xaphodObjCUtils
         self.timer = Timer.scheduledTimer(timeInterval: 60.0, target: self, selector: #selector(timerFired), userInfo: nil, repeats: false)
         
         let peer = self.peers[(indexPath as NSIndexPath).row]
-        peer.inviteBlock(true, 20.0)
+        peer.inviteBlock(20.0)
     }
     
     @IBAction func cancelPressed(_ sender: AnyObject) {
@@ -153,8 +153,8 @@ extension BluepeerBrowserViewController: BluepeerSessionManagerDelegate {
             })
         })
     }
-    
-    public func browserFoundPeer(_ role: RoleType, peer: BPPeer, inviteBlock: @escaping (_ connect: Bool, _ timeoutForInvite: TimeInterval) -> Void) {
+
+    public func browserFoundPeer(_ role: RoleType, peer: BPPeer, inviteBlock: @escaping (_ timeoutForInvite: TimeInterval) -> Void) {
         DispatchQueue.main.async(execute: {
             self.peers.append((peer: peer, inviteBlock: inviteBlock))
             self.tableView.reloadData()
