@@ -207,8 +207,10 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
             peer.socket?.delegate = nil // we don't want to run our disconnection logic below
             peer.socket?.disconnect()
             peer.socket = nil
+            peer.dnsService?.endResolve()
             peer.dnsService = nil
             peer.state = .notConnected
+            peer.announced = false
         }
         self.killAllKeepaliveTimers()
         self.peers = [] // remove all peers!
@@ -315,7 +317,9 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
         self.browser = nil
         self.browsing = false
         for peer in self.peers {
+            peer.dnsService?.endResolve()
             peer.dnsService = nil
+            peer.announced = false
         }
     }
     
@@ -491,12 +495,6 @@ extension BluepeerObject : HHServiceBrowserDelegate {
             
             // if this peer eixsts, then add this as another address(es), otherwise add now
             var peer = self.peers.filter({ $0.displayName == service.name }).first
-            if peer != nil {
-                if service != peer?.dnsService {
-                    NSLog("BluepeerObject didFind: found existing peer but it has a different dnsService! creating new peer instead")
-                    peer = nil
-                }
-            }
             
             if peer == nil {
                 peer = BPPeer.init()
@@ -506,7 +504,9 @@ extension BluepeerObject : HHServiceBrowserDelegate {
                 self.peers.append(peer)
                 NSLog("BluepeerObject didFind: created new peer \(peer.displayName). Peers.count after adding: \(self.peers.count)")
             } else {
-                NSLog("BluepeerObject didFind: found existing peer \(peer?.displayName) with same service - no-op!")
+                NSLog("BluepeerObject didFind: found existing peer \(peer?.displayName), replacing with newer service")
+                peer?.dnsService?.endResolve()
+                peer?.dnsService = service
             }
 
             let prots = UInt32(kDNSServiceProtocol_IPv4) | UInt32(kDNSServiceProtocol_IPv6)
@@ -521,6 +521,7 @@ extension BluepeerObject : HHServiceBrowserDelegate {
     public func serviceBrowser(_ serviceBrowser: HHServiceBrowser, didRemove service: HHService, moreComing: Bool) {
         NSLog("BluepeerObject: didRemoveService \(service.name)")
         if let peer = self.peers.filter({ $0.dnsService == service }).first {
+            peer.dnsService?.endResolve()
             peer.dnsService = nil
             peer.announced = false
             self.dispatch_on_delegate_queue({
