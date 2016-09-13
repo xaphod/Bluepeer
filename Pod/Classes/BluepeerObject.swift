@@ -74,16 +74,6 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
     open var state: BPPeerState = .notConnected
     var dnsService: HHService?
     var announced = false
-    override open func isEqual(_ object: Any?) -> Bool {
-        if let rhs = object as? BPPeer {
-            return self.displayName == rhs.displayName
-        } else {
-            return false
-        }
-    }
-    override open var hash: Int {
-        return self.displayName.hash
-    }
     open var keepaliveTimer: Timer?
     open var lastReceivedOrSentData: Date = Date.init(timeIntervalSince1970: 0)
 }
@@ -142,6 +132,7 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
     let headerTerminator: Data = "\r\n\r\n".data(using: String.Encoding.utf8)! // same as HTTP. But header content here is just a number, representing the byte count of the incoming nsdata.
     let keepAliveHeader: Data = "0 ! 0 ! 0 ! 0 ! 0 ! 0 ! 0 ! ".data(using: String.Encoding.utf8)! // A special header kept to avoid timeouts
     let socketQueue = DispatchQueue(label: "xaphod.bluepeer.socketQueue", attributes: [])
+    var browsingWorkaroundRestarts = 0
     
     enum DataTag: Int {
         case tag_HEADER = 1
@@ -228,7 +219,7 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
     }
     
     open func startAdvertising(_ role: RoleType) {
-        if let role = self.advertising {
+        if let _ = self.advertising {
             NSLog("BluepeerObject: Already advertising (no-op)")
             return
         }
@@ -584,13 +575,42 @@ extension BluepeerObject : HHServiceDelegate {
         NSLog("BluepeerObject: serviceDidResolve, name: \(service.name), role: \(roleStr), announced: \(peer.announced), addresses: \(hhaddresses.count)")
         
         // should we annouce? if we have at least one candidate address, yes.
-        let candidates = hhaddresses.filter({ $0.isCandidateAddress(bluetoothOnly: self.bluetoothOnly) })
+        var limitToBluetooth = self.bluetoothOnly
+        let candidates = hhaddresses.filter({ $0.isCandidateAddress(bluetoothOnly: limitToBluetooth) })
         if peer.announced {
             NSLog("... already announced, not continuing")
             return
         } else if candidates.count == 0 {
-            NSLog("... no candidates out of \(hhaddresses.count) addresses, not announcing")
-            return
+            NSLog("... no candidates out of \(hhaddresses.count) addresses, not announcing. moreComing = \(moreComing)")
+            if hhaddresses.count > 1 && !moreComing {
+                if (self.browsingWorkaroundRestarts >= 3) {
+                    NSLog(" *** workarounds exhausted! falling back to not bluetoothOnly")
+                    self.browsingWorkaroundRestarts = 0
+                    limitToBluetooth = false
+                    let secondaryCandidates = hhaddresses.filter({ $0.isCandidateAddress(bluetoothOnly: limitToBluetooth) })
+                    if (secondaryCandidates.count > 0) {
+                        NSLog("... announcing now")
+                        peer.announced = true
+                    } else {
+                        NSLog("... STILL no candidates. Bummer.")
+                        return
+                    }
+                    
+                } else {
+                    self.browsingWorkaroundRestarts += 1
+                    NSLog(" *** workaround for BT radio connection delay: restarting browsing, \(self.browsingWorkaroundRestarts) of 3")
+                    self.stopBrowsing()
+                    if let indexOfPeer = self.peers.index(of: peer) {
+                        self.peers.remove(at: indexOfPeer)
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                        self.startBrowsing()
+                    }
+                    return
+                }
+            } else {
+                return
+            }
         } else {
             NSLog("... announcing now")
             peer.announced = true
@@ -600,7 +620,7 @@ extension BluepeerObject : HHServiceDelegate {
             delegate.browserFoundPeer?(role, peer: peer, inviteBlock: { (timeoutForInvite) in
                 do {
                     // pick the address to connect to INSIDE the block, because more addresses may have been added between announcement and inviteBlock being executed
-                    guard let hhaddresses = peer.dnsService?.resolvedAddressInfo, hhaddresses.count > 0, var chosenAddress = hhaddresses.filter({ $0.isCandidateAddress(bluetoothOnly: self.bluetoothOnly) }).first else {
+                    guard let hhaddresses = peer.dnsService?.resolvedAddressInfo, hhaddresses.count > 0, var chosenAddress = hhaddresses.filter({ $0.isCandidateAddress(bluetoothOnly: limitToBluetooth) }).first else {
                         NSLog("BluepeerObject inviteBlock: ERROR, no resolvedAddresses or candidates!?!")
                         assert(false)
                         return
@@ -930,7 +950,9 @@ extension BluepeerObject: CBPeripheralManagerDelegate {
             NSLog("PoweredOn")
             self.bluetoothState = .poweredOn
         }
-        self.bluetoothBlock?(self.bluetoothState)
+        if UIApplication.shared.applicationState != .background {
+            self.bluetoothBlock?(self.bluetoothState)
+        }
     }
 }
 
