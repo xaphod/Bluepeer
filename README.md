@@ -11,8 +11,11 @@ Bluepeer was written because Apple's Multipeer has a severe negative impact on w
 
 Bluepeer is written in Swift, uses only publicly-accessible Apple APIs, and **is published in several apps on the Apple App Store** including [WiFi Booth](http://thewifibooth.com) and [BluePrint](https://thewifibooth.com/blueprint/).
 
+### UPDATED FOR XCODE 8 / SWIFT 3.0
+In mid-september 2016 this was updated to Swift 3.0. You can roll back to older version 1.0.11 if you can't consume Swift 3.0 in your project yet. Please note that the code snippets below in this file have not been updated.
+
 ### Requirements
-See the Podfile: Bluepeer requires `xaphodObjCUtils` and `HHServices` from GitHub/Xaphod, as well as `CocoaAsyncSocket`.
+See the Podfile: Bluepeer requires `xaphodObjCUtils` from GitHub/Xaphod, and `HHServices` + `CocoaAsyncSocket` from the master cocoapods repo.
 
 ### Installation
 
@@ -78,17 +81,17 @@ At this point, someone needs to start advertising the service. Bluepeer has Serv
 
 ... and the dataDelegate:
 
-        extension SomeClass: BluepeerDataDelegate {
-    func didReceiveData(data: NSData, fromPeer peerID: BPPeer) {
-        // received data from BPPeer fromPeer ! do something with it
+    extension SomeClass: BluepeerDataDelegate {
+        func didReceiveData(data: NSData, fromPeer peerID: BPPeer) {
+            // received data from BPPeer fromPeer ! do something with it
+        }
     }
 
 On the side that needs to initiate the connection, you have a couple of options. You can do it programmatically, or you can present a browser to the user like this:
 
-            let browserViewController = bluepeer.getBrowser { (success) in
-            if (success) {
-                self.performSegueWithIdentifier("segueToSomewhere", sender: self)
-            }
+        let browserViewController = bluepeer.getBrowser { (success) in
+        if (success) {
+            self.performSegueWithIdentifier("segueToSomewhere", sender: self)
         }
         
         if (UIDevice.currentDevice().userInterfaceIdiom == .Phone) {
