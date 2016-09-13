@@ -950,9 +950,7 @@ extension BluepeerObject: CBPeripheralManagerDelegate {
             NSLog("PoweredOn")
             self.bluetoothState = .poweredOn
         }
-        if UIApplication.shared.applicationState != .background {
-            self.bluetoothBlock?(self.bluetoothState)
-        }
+        self.bluetoothBlock?(self.bluetoothState)
     }
 }
 
