@@ -1,18 +1,20 @@
 # Bluepeer
 
-Bluepeer provides an adhoc Bluetooth layer for iOS 8+. Bluepeer is designed to be a MultiPeer replacement (Multipeer is Apple's MultipeerFramework, which lives inside GameKit). The APIs are as similar as possible in order to aid with migrations. Bluepeer has some key differences from Multipeer:
+Bluepeer provides adhoc Bluetooth and wifi connectivity for iOS 8+. Bluepeer is designed to be a MultiPeer replacement (Multipeer is Apple's MultipeerFramework, which lives inside GameKit). The APIs are as similar as possible in order to aid with migrations. Bluepeer has some key differences from Multipeer:
 
+- Can specify Bluetooth-only, instead of being forced to always use wifi with Multipeer (see next paragraph for why this is important)
 - Exposes a role-based system to more easily support client/server dichotomies (but you can set up roles however you like)
-- Uses sockets, TCP & unicast only (is not multicast like Multipeer is, and does not support UDP)
-- Can specify Bluetooth-only, instead of being forced to always use wifi with Multipeer
+- Uses sockets, TCP & unicast only (is not multicast like Multipeer is, and does not support UDP / `.unreliable` mode)
 - Is ideal for environments where devices are coming and going all the time, ie. you never call `stopAdvertising()`
 
 Bluepeer was written because Apple's Multipeer has a severe negative impact on wifi throughput / performance if you leave advertising on -- while advertising, wifi throughput is limited to about 100kB/sec instead of >1MB/sec on an iPad Air. That's why Apple advises that you call `stopAdvertising()` as soon as possible. Bluepeer avoids this by allowing advertising to only occur on the Bluetooth stack.
 
-Bluepeer is written in Swift, uses only publicly-accessible Apple APIs, and **is published in several apps on the Apple App Store** including [WiFi Booth](http://thewifibooth.com) and [BluePrint](https://thewifibooth.com/blueprint/).
+Bluepeer is written in Swift, uses only publicly-accessible Apple APIs, and **is published in several apps on the Apple App Store** including [WiFi Booth](http://thewifibooth.com) and [BluePrint](https://thewifibooth.com/blueprint/). Bluepeer wouldn't have been possible without [HHServices](https://github.com/tolo/HHServices) by **tolo** -- many thanks Tobias!
 
 ### UPDATED FOR XCODE 8 / SWIFT 3.0
 In mid-september 2016 this was updated to Swift 3.0. You can roll back to older version 1.0.11 if you can't consume Swift 3.0 in your project yet. Please note that the code snippets below in this file have not been updated.
+
+As of iOS 10.0, it appears that Apple's Multipeer is broken unless wifi is on - ie. Bluetooth doesn't work. Bluepeer was updated for iOS 10 because it appears that iOS 10 blocks IPv4 advertising over Bluetooth (at least, while IPv6 is available). As a result, IPv6 addresses are now preferred for iOS versions >= 10.
 
 ### Requirements
 See the Podfile: Bluepeer requires `xaphodObjCUtils` from GitHub/Xaphod, and `HHServices` + `CocoaAsyncSocket` from the master cocoapods repo.
