@@ -486,6 +486,7 @@ extension BluepeerObject : HHServicePublisherDelegate {
 
 extension BluepeerObject : HHServiceBrowserDelegate {
     public func serviceBrowser(_ serviceBrowser: HHServiceBrowser, didFind service: HHService, moreComing: Bool) {
+        NSLog("BluepeerObject: didFindService \(service.name), moreComing: \(moreComing)")
         if self.browsing == false {
             return
         }
@@ -518,15 +519,16 @@ extension BluepeerObject : HHServiceBrowserDelegate {
     }
     
     public func serviceBrowser(_ serviceBrowser: HHServiceBrowser, didRemove service: HHService, moreComing: Bool) {
-        NSLog("BluepeerObject: didRemoveService \(service.name)")
-        if let peer = self.peers.filter({ $0.dnsService == service }).first {
-            peer.dnsService?.endResolve()
-            peer.dnsService = nil
-            peer.announced = false
-            self.dispatch_on_delegate_queue({
-                self.sessionDelegate?.browserLostPeer?(peer.role, peer: peer)
-            })
-        }
+        NSLog("BluepeerObject: didRemoveService \(service.name) -- IGNORING")
+//        NSLog("BluepeerObject: didRemoveService \(service.name)")
+//        if let peer = self.peers.filter({ $0.dnsService == service }).first {
+//            peer.dnsService?.endResolve()
+//            peer.dnsService = nil
+//            peer.announced = false
+//            self.dispatch_on_delegate_queue({
+//                self.sessionDelegate?.browserLostPeer?(peer.role, peer: peer)
+//            })
+//        }
     }
 }
 
