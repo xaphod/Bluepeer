@@ -32,6 +32,7 @@ import xaphodObjCUtils
     
     override open func viewDidLoad() {
         super.viewDidLoad()
+        self.setNeedsStatusBarAppearanceUpdate()
         guard let bo = bluepeerObject else {
             assert(false, "ERROR: set bluepeerObject before loading view")
             return
@@ -43,12 +44,6 @@ import xaphodObjCUtils
     
     override open func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-//        let popoverPresentationVC = self.parentViewController?.popoverPresentationController
-//        if (popoverPresentationVC != nil && UIPopoverArrowDirection.Unknown.rawValue > popoverPresentationVC!.arrowDirection.rawValue) {
-//            self.navigationItem.setLeftBarButtonItem(nil, animated: false)
-//        } else {
-//            // presented as modal view controller (on iPhone)
-//        }
     }
     
     override open func viewWillDisappear(_ animated: Bool) {
@@ -59,6 +54,14 @@ import xaphodObjCUtils
         self.lastTimerStarted = nil
         self.timer?.invalidate()
         self.timer = nil
+    }
+
+    override open var prefersStatusBarHidden: Bool {
+        return false
+    }
+    
+    override open var preferredStatusBarStyle: UIStatusBarStyle {
+        return .default
     }
 
     // MARK: - Table view data source
@@ -109,7 +112,9 @@ import xaphodObjCUtils
     
     @IBAction func cancelPressed(_ sender: AnyObject) {
         self.bluepeerObject?.disconnectSession()
-        self.dismiss(animated: true, completion: nil)
+        self.dismiss(animated: true, completion: {
+            self.browserCompletionBlock?(false)
+        })
     }
     
     func timerFired(_ timer: Timer) {
