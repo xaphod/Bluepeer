@@ -126,7 +126,7 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
     weak open var dataDelegate: BluepeerDataDelegate?
     open var peers = [BPPeer]()
     open var bluetoothState : BluetoothState = .unknown
-    var bluetoothPeripheralManager: CBPeripheralManager
+    var bluetoothPeripheralManager: CBPeripheralManager!
     open var bluetoothBlock: ((_ bluetoothState: BluetoothState) -> Void)?
     open var disconnectOnBackground: Bool = false
     let headerTerminator: Data = "\r\n\r\n".data(using: String.Encoding.utf8)! // same as HTTP. But header content here is just a number, representing the byte count of the incoming nsdata.
@@ -153,7 +153,6 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
         self.serviceType = "_" + serviceType + "._tcp"
         self.bluetoothOnly = overBluetoothOnly
         self.delegateQueue = queue
-        self.bluetoothPeripheralManager = CBPeripheralManager.init(delegate: nil, queue: nil, options: [CBCentralManagerOptionShowPowerAlertKey:0])
         
         super.init()
 
