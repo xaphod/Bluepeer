@@ -818,7 +818,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             assert(peer.state == .awaitingAuth, "ERROR: expect I only get this while awaiting auth")
             peer.state = .connected // CLIENT becomes connected
             self.dispatch_on_delegate_queue({
-                self.sessionDelegate?.peerDidConnect!(peer.role, peer: peer)
+                self.sessionDelegate?.peerDidConnect?(peer.role, peer: peer)
             })
             sock.readData(to: self.headerTerminator, withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_HEADER.rawValue)
             
@@ -847,7 +847,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             
             if let delegate = self.sessionDelegate {
                 self.dispatch_on_delegate_queue({
-                    delegate.peerConnectionRequest!(peer, invitationHandler: { (inviteAccepted) in
+                    delegate.peerConnectionRequest?(peer, invitationHandler: { (inviteAccepted) in
                         if inviteAccepted && peer.state == .awaitingAuth && sock.isConnected == true {
                             peer.state = .connected // SERVER becomes connected
                             // CONVENTION: SERVER sends CLIENT a single 0 to show connection has been accepted, since it isn't possible to send a header for a payload of size zero except here.
