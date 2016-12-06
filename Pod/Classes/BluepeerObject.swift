@@ -354,7 +354,7 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
     func sendDataInternal(_ peer: BPPeer, data: Data) {
         // send header first. Then separator. Then send body.
         var length: UInt = UInt(data.count)
-        let senddata = NSMutableData.init(bytes: &length, length: MemoryLayout<UInt>.size)
+        let senddata = NSMutableData.init(bytes: &length, length: 8)
         senddata.append(self.headerTerminator)
         senddata.append(data)
         peer.socket?.write(senddata as Data, withTimeout: Timeouts.body.rawValue, tag: DataTag.tag_WRITING.rawValue)
@@ -831,7 +831,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
                 sock.readData(to: self.headerTerminator, withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_HEADER.rawValue)
             } else {
                 var length: UInt = 0
-                (dataWithoutTerminator as NSData).getBytes(&length, length: MemoryLayout<UInt>.size)
+                (dataWithoutTerminator as NSData).getBytes(&length, length: 8)
                 NSLog("BluepeerObject: got header, reading %lu bytes...", length)
                 sock.readData(toLength: length, withTimeout: Timeouts.body.rawValue, tag: DataTag.tag_BODY.rawValue)
             }
