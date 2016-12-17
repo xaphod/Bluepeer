@@ -174,6 +174,10 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
     deinit {
         NotificationCenter.default.removeObserver(self)
         self.killAllKeepaliveTimers()
+        self.disconnectSession()
+        self.stopBrowsing()
+        self.stopAdvertising()
+        NSLog("BluepeerObject: DEINIT FINISH")
     }
     
     // Note: if I disconnect, then my delegate is expected to reconnect if needed.
@@ -203,7 +207,7 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
         // loop through peers, disconenct all sockets
         for peer in self.peers {
             NSLog("BluepeerObject disconnectSession: disconnecting \(peer.displayName)")
-            peer.socket?.delegate = nil // we don't want to run our disconnection logic below
+            peer.socket?.synchronouslySetDelegate(nil) // we don't want to run our disconnection logic below
             peer.socket?.disconnect()
             peer.socket = nil
             peer.dnsService?.endResolve()
@@ -275,7 +279,7 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
         self.publisher = nil
         self.advertising = nil
         if let socket = self.serverSocket {
-            socket.delegate = nil
+            socket.synchronouslySetDelegate(nil)
             socket.disconnect()
             self.serverSocket = nil
             NSLog("BluepeerObject: destroyed serverSocket")
@@ -456,7 +460,7 @@ extension BluepeerObject : HHServicePublisherDelegate {
     public func serviceDidPublish(_ servicePublisher: HHServicePublisher) {
         // create serverSocket
         if let socket = self.serverSocket {
-            socket.delegate = nil
+            socket.synchronouslySetDelegate(nil)
             socket.disconnect()
             self.serverSocket = nil
         }
@@ -641,8 +645,15 @@ extension BluepeerObject : HHServiceDelegate {
                     
                     self.stopBrowsing() // stop browsing once user has done something. Destroys all HHService except this one!
                     
+                    if let oldSocket = peer.socket {
+                        NSLog("**** BluepeerObject: PEER ALREADY HAD SOCKET, DESTROYING...")
+                        oldSocket.synchronouslySetDelegate(nil)
+                        oldSocket.disconnect()
+                        peer.socket = nil
+                    }
+                    
                     peer.socket = GCDAsyncSocket.init(delegate: self, delegateQueue: self.socketQueue)
-                    peer.socket!.isIPv4PreferredOverIPv6 = false
+                    peer.socket?.isIPv4PreferredOverIPv6 = false
                     peer.state = .connecting
                     try peer.socket?.connect(toAddress: sockdata, viaInterface: chosenAddress.interfaceName, withTimeout: timeoutForInvite)
                 } catch {
@@ -770,7 +781,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
     public func socketDidDisconnect(_ sock: GCDAsyncSocket, withError err: Error?) {
         guard let peerIndex = self.peers.index(where: {sock == $0.socket}) else {
             NSLog("BluepeerObject socketDidDisconnect: WARNING, expected to find a peer, calling peerConnectionAttemptFailed")
-            sock.delegate = nil
+            sock.synchronouslySetDelegate(nil)
             self.dispatch_on_delegate_queue({
                 self.sessionDelegate?.peerConnectionAttemptFailed?(.unknown, peer: nil, isAuthRejection: false)
             })
@@ -783,7 +794,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
         peer.keepaliveTimer?.invalidate()
         peer.keepaliveTimer = nil
         peer.socket = nil
-        sock.delegate = nil
+        sock.synchronouslySetDelegate(nil)
         switch oldState {
         case .connected:
             self.peers.remove(at: peerIndex)
@@ -859,7 +870,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
                             sock.readData(to: self.headerTerminator, withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_HEADER.rawValue)
                         } else {
                             peer.state = .notConnected
-                            sock.delegate = nil
+                            sock.synchronouslySetDelegate(nil)
                             sock.disconnect()
                             peer.socket = nil
                             NSLog("... rejected (by my delegate), or no longer connected")
