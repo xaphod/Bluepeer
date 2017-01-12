@@ -138,6 +138,7 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
     let keepAliveHeader: Data = "0 ! 0 ! 0 ! 0 ! 0 ! 0 ! 0 ! ".data(using: String.Encoding.utf8)! // A special header kept to avoid timeouts
     let socketQueue = DispatchQueue(label: "xaphod.bluepeer.socketQueue", attributes: [])
     var browsingWorkaroundRestarts = 0
+    var backgroundTask: UIBackgroundTaskIdentifier?
     
     enum DataTag: Int {
         case tag_HEADER = 1
@@ -178,15 +179,19 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
     
     deinit {
         NotificationCenter.default.removeObserver(self)
-        self.killAllKeepaliveTimers()
+        self.killAllKeepaliveTimers() // probably moot: won't start deiniting until all timers are dead, because they have a strong ref to self
         self.disconnectSession()
         self.stopBrowsing()
         self.stopAdvertising()
         NSLog("BluepeerObject: DEINIT FINISH")
+        self.endBackgroundTask()
     }
     
     // Note: if I disconnect, then my delegate is expected to reconnect if needed.
     func didEnterBackground() {
+        self.backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "BluepeerBackgroundedTask", expirationHandler: {
+            self.endBackgroundTask()
+        })
         self.onLastBackground = (self.advertising, self.browsing)
         stopBrowsing()
         stopAdvertising()
@@ -195,7 +200,15 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
             NSLog("BluepeerObject: didEnterBackground - stopped browsing & advertising, and disconnected session")
         } else {
             NSLog("BluepeerObject: didEnterBackground - stopped browsing & advertising")
+            self.endBackgroundTask()
         }
+    }
+    
+    func endBackgroundTask() {
+        if let backgroundTask = self.backgroundTask {
+            UIApplication.shared.endBackgroundTask(backgroundTask)
+        }
+        self.backgroundTask = UIBackgroundTaskInvalid
     }
     
     func willEnterForeground() {
@@ -219,8 +232,9 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
             peer.dnsService = nil
             peer.state = .notConnected
             peer.announced = false
+            peer.keepaliveTimer?.invalidate()
+            peer.keepaliveTimer = nil
         }
-        self.killAllKeepaliveTimers()
         self.peers = [] // remove all peers!
     }
     
@@ -372,16 +386,16 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
     }
     
     func scheduleNextKeepaliveTimer(_ peer: BPPeer) {
-        if peer.state != .connected {
-            return
-        }
-        if peer.keepaliveTimer?.isValid == true && abs(peer.lastReceivedOrSentData.timeIntervalSinceNow) < 5.0 {
-            // flood protection
-            return
-        }
-        peer.lastReceivedOrSentData = Date.init()
-        
         DispatchQueue.main.async(execute: {
+            if peer.state != .connected || peer.socket == nil {
+                return
+            }
+            if peer.keepaliveTimer?.isValid == true && abs(peer.lastReceivedOrSentData.timeIntervalSinceNow) < 5.0 {
+                // flood protection
+                return
+            }
+            peer.lastReceivedOrSentData = Date.init()
+
             let delay: TimeInterval = Timeouts.header.rawValue - 5.0 - (Double(arc4random_uniform(10000)) / Double(1000)) // definitely 5s before HEADER timeout, or as much as 15s before
             if peer.keepaliveTimer?.isValid == true {
                 NSLog("BluepeerObject: keepalive rescheduled for \(peer.displayName) in \(delay)s")
@@ -396,14 +410,18 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
     func keepAliveTimerFired(_ timer: Timer) {
         guard let ui = timer.userInfo as? Dictionary<String, AnyObject> else {
             assert(false, "ERROR")
+            timer.invalidate()
             return
         }
         guard let peer = ui["peer"] as? BPPeer else {
-            assert(false, "I'm expecting keepAlive timers can always find their peers, ie the peers don't get erased")
+            NSLog("BluepeerObject: keepAlive timer didn't find a peer, invalidating timer")
+            timer.invalidate()
             return
         }
-        if peer.state != .connected {
-            NSLog("BluepeerObject: keepAlive timer finds peer isn't connected (no-op)")
+        if peer.state != .connected || peer.socket == nil {
+            NSLog("BluepeerObject: keepAlive timer finds peer isn't connected, invalidating timer")
+            timer.invalidate()
+            peer.keepaliveTimer = nil
         } else {
             var senddata = NSData.init(data: self.keepAliveHeader) as Data
             senddata.append(self.headerTerminator)
@@ -760,7 +778,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
     
     public func socket(_ sock: GCDAsyncSocket, didConnectToHost host: String, port: UInt16) {
         guard let peer = sock.peer else {
-            assert(false, "BluepeerObject: programming error, expected to find a peer already in didConnectToHost")
+            NSLog("BluepeerObject: WARNING, did not find peer in didConnectToHost, doing nothing")
             return
         }
         peer.state = .awaitingAuth
@@ -827,7 +845,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
     
     public func socket(_ sock: GCDAsyncSocket, didRead data: Data, withTag tag: Int) {
         guard let peer = sock.peer else {
-            assert(false, "BluepeerObject: programming error, expected to find a peer in didReadData")
+            NSLog("BluepeerObject: WARNING, did not find peer in didReadData, doing nothing")
             return
         }
         self.scheduleNextKeepaliveTimer(peer)
@@ -906,7 +924,6 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
     
     public func socket(_ sock: GCDAsyncSocket, didWriteDataWithTag tag: Int) {
         guard let peer = sock.peer else {
-            assert(false, "BluepeerObject: programming error, expected to find a peer in didWriteData")
             return
         }
         self.scheduleNextKeepaliveTimer(peer)
@@ -914,7 +931,6 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
     
     public func socket(_ sock: GCDAsyncSocket, didReadPartialDataOfLength partialLength: UInt, tag: Int) {
         guard let peer = sock.peer else {
-            assert(false, "BluepeerObject: programming error, expected to find a peer in didReadPartialDataOfLength")
             return
         }
         self.scheduleNextKeepaliveTimer(peer)
@@ -922,7 +938,6 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
     
     public func socket(_ sock: GCDAsyncSocket, didWritePartialDataOfLength partialLength: UInt, tag: Int) {
         guard let peer = sock.peer else {
-            assert(false, "BluepeerObject: programming error, expected to find a peer in didWritePartialDataOfLength")
             return
         }
         self.scheduleNextKeepaliveTimer(peer)
@@ -938,7 +953,6 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
     
     public func calcTimeExtension(_ sock: GCDAsyncSocket, tag: Int) -> TimeInterval {
         guard let peer = sock.peer else {
-            assert(false, "BluepeerObject: programming error, expected to find a peer")
             return 0
         }
         
