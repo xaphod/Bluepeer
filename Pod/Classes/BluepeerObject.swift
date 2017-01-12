@@ -386,7 +386,7 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
     }
     
     func scheduleNextKeepaliveTimer(_ peer: BPPeer) {
-        DispatchQueue.main.async(execute: {
+        DispatchQueue.main.async(execute: { // timer needs main, don't want to do checks earlier than right before scheduling timer
             if peer.state != .connected || peer.socket == nil {
                 return
             }
