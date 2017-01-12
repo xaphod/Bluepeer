@@ -91,6 +91,10 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
     func didReceiveData(_ data: Data, fromPeer peerID: BPPeer)
 }
 
+@objc public protocol BluepeerLoggingDelegate {
+    func didReadWrite(_ logString: String)
+}
+
 @objc open class BluepeerObject: NSObject {
     
     var delegateQueue: DispatchQueue?
@@ -124,6 +128,7 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
     
     weak open var sessionDelegate: BluepeerSessionManagerDelegate?
     weak open var dataDelegate: BluepeerDataDelegate?
+    weak open var logDelegate: BluepeerLoggingDelegate?
     open var peers = [BPPeer]()
     open var bluetoothState : BluetoothState = .unknown
     var bluetoothPeripheralManager: CBPeripheralManager!
@@ -330,6 +335,7 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
         for data in datas {
             NSLog("BluepeerObject: sending data size \(data.count) to \(toPeers.count) peers")
             for peer in toPeers {
+                self.logDelegate?.didReadWrite("writeSendDataToPeers")
                 self.sendDataInternal(peer, data: data)
             }
         }
@@ -350,6 +356,7 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
             }
             NSLog("BluepeerObject sending data size \(data.count) to \(targetPeers.count) peers")
             for peer in targetPeers {
+                self.logDelegate?.didReadWrite("writeSendDataToRole")
                 self.sendDataInternal(peer, data: data)
             }
         }
@@ -400,6 +407,7 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
         } else {
             var senddata = NSData.init(data: self.keepAliveHeader) as Data
             senddata.append(self.headerTerminator)
+            self.logDelegate?.didReadWrite("writeKeepAlive")
             peer.socket?.write(senddata, withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_WRITING.rawValue)
             NSLog("BluepeerObject: send keepAlive to \(peer.displayName) @ \(peer.socket?.connectedHost)")
         }
@@ -743,6 +751,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             NSLog("BluepeerObject: accepting new connection from \(connectedHost). Peers.count after add: \(self.peers.count)")
             
             // CONVENTION: CLIENT sends SERVER 32 bytes of its name -- UTF-8 string
+            self.logDelegate?.didReadWrite("readName")
             newSocket.readData(toLength: 32, withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_NAME.rawValue)
         } else {
             NSLog("BluepeerObject: WARNING, ignoring connection attempt because I don't have a sessionDelegate assigned")
@@ -772,9 +781,11 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
         // pad to 32 bytes!
         let paddedStrData: NSMutableData = ("                                ".data(using: String.Encoding.utf8) as NSData?)?.mutableCopy() as! NSMutableData // that's 32 spaces :)
         paddedStrData.replaceBytes(in: NSMakeRange(0, strData!.length), withBytes: (strData?.bytes)!)
+        self.logDelegate?.didReadWrite("writeName")
         sock.write(paddedStrData as Data, withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_WRITING.rawValue)
         
         // now await auth
+        self.logDelegate?.didReadWrite("readAuth")
         sock.readData(toLength: 1, withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_AUTH.rawValue)
     }
     
@@ -831,6 +842,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             self.dispatch_on_delegate_queue({
                 self.sessionDelegate?.peerDidConnect?(peer.role, peer: peer)
             })
+            self.logDelegate?.didReadWrite("readHeaderTerminator1")
             sock.readData(to: self.headerTerminator, withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_HEADER.rawValue)
             
         } else if tag == DataTag.tag_HEADER.rawValue {
@@ -839,11 +851,13 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             let dataWithoutTerminator = data.subdata(in: Range(range))
             if dataWithoutTerminator == self.keepAliveHeader {
                 NSLog("BluepeerObject: got keepalive")
+                self.logDelegate?.didReadWrite("readHeaderTerminator2")
                 sock.readData(to: self.headerTerminator, withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_HEADER.rawValue)
             } else {
                 var length: UInt = 0
                 (dataWithoutTerminator as NSData).getBytes(&length, length: 8)
                 NSLog("BluepeerObject: got header, reading %lu bytes...", length)
+                self.logDelegate?.didReadWrite("readBody")
                 sock.readData(toLength: length, withTimeout: Timeouts.body.rawValue, tag: DataTag.tag_BODY.rawValue)
             }
             
@@ -862,11 +876,13 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
                         if inviteAccepted && peer.state == .awaitingAuth && sock.isConnected == true {
                             peer.state = .connected // SERVER becomes connected
                             // CONVENTION: SERVER sends CLIENT a single 0 to show connection has been accepted, since it isn't possible to send a header for a payload of size zero except here.
+                            self.logDelegate?.didReadWrite("writeAcceptance")
                             sock.write(Data.init(count: 1), withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_WRITING.rawValue)
                             NSLog("... accepted (by my delegate)")
                             self.dispatch_on_delegate_queue({
                                 self.sessionDelegate?.peerDidConnect?(.client, peer: peer)
                             })
+                            self.logDelegate?.didReadWrite("readHeaderTerminator3")
                             sock.readData(to: self.headerTerminator, withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_HEADER.rawValue)
                         } else {
                             peer.state = .notConnected
@@ -883,6 +899,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             self.dispatch_on_delegate_queue({
                 self.dataDelegate?.didReceiveData(data, fromPeer: peer)
             })
+            self.logDelegate?.didReadWrite("readHeaderTerminator4")
             sock.readData(to: self.headerTerminator, withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_HEADER.rawValue)
         }
     }
