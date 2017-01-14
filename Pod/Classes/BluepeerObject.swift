@@ -75,7 +75,7 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
     var dnsService: HHService?
     var announced = false
     open var keepaliveTimer: Timer?
-    open var lastReceivedOrSentData: Date = Date.init(timeIntervalSince1970: 0)
+    open var lastReceivedData: Date = Date.init(timeIntervalSince1970: 0)
 }
 
 @objc public protocol BluepeerSessionManagerDelegate {
@@ -149,8 +149,10 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
     }
     
     enum Timeouts: Double {
-        case header = 40 // keepAlive packets (32bytes) will be sent every HEADER-10 seconds
+        case header = 40
         case body = 90
+        case keepAlive = 30
+    }
     }
     
     // if queue isn't given, main queue is used
@@ -378,10 +380,15 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
 
     func sendDataInternal(_ peer: BPPeer, data: Data) {
         // send header first. Then separator. Then send body.
+        // length: send as 4-byte, then 4 bytes of unused 0s for now. assumes endianness doesn't change between platforms, ie 23 00 00 00 not 00 00 00 23
         var length: UInt = UInt(data.count)
-        let senddata = NSMutableData.init(bytes: &length, length: 8)
+        let senddata = NSMutableData.init(bytes: &length, length: 4)
+        let unused4bytesdata = NSMutableData.init(length: 4)!
+        senddata.append(unused4bytesdata as Data)
         senddata.append(self.headerTerminator)
         senddata.append(data)
+        
+//        NSLog("sendDataInternal writes: \((senddata as Data).hex), payload part: \(data.hex)")
         peer.socket?.write(senddata as Data, withTimeout: Timeouts.body.rawValue, tag: DataTag.tag_WRITING.rawValue)
     }
     
@@ -390,20 +397,16 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
             if peer.state != .connected || peer.socket == nil {
                 return
             }
-            if peer.keepaliveTimer?.isValid == true && abs(peer.lastReceivedOrSentData.timeIntervalSinceNow) < 5.0 {
-                // flood protection
+
+            peer.lastReceivedData = Date.init()
+
+            if peer.keepaliveTimer?.isValid == true {
                 return
             }
-            peer.lastReceivedOrSentData = Date.init()
 
-            let delay: TimeInterval = Timeouts.header.rawValue - 5.0 - (Double(arc4random_uniform(10000)) / Double(1000)) // definitely 5s before HEADER timeout, or as much as 15s before
-            if peer.keepaliveTimer?.isValid == true {
-                NSLog("BluepeerObject: keepalive rescheduled for \(peer.displayName) in \(delay)s")
-                peer.keepaliveTimer?.fireDate = Date.init(timeIntervalSinceNow: delay)
-            } else {
-                NSLog("BluepeerObject: keepalive INITIAL SCHEDULING for \(peer.displayName) in \(delay)s")
-                peer.keepaliveTimer = Timer.scheduledTimer(timeInterval: delay, target: self, selector: #selector(self.keepAliveTimerFired), userInfo: ["peer":peer], repeats: true)
-            }
+            let delay: TimeInterval = Timeouts.keepAlive.rawValue - 5 - (Double(arc4random_uniform(5000)) / Double(1000)) // keepAlive.rawValue - 5 - (up to 5)
+            NSLog("BluepeerObject: keepalive INITIAL SCHEDULING for \(peer.displayName) in \(delay)s")
+            peer.keepaliveTimer = Timer.scheduledTimer(timeInterval: delay, target: self, selector: #selector(self.keepAliveTimerFired), userInfo: ["peer":peer], repeats: true)
         })
     }
     
@@ -426,6 +429,9 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
             var senddata = NSData.init(data: self.keepAliveHeader) as Data
             senddata.append(self.headerTerminator)
             self.logDelegate?.didReadWrite("writeKeepAlive")
+            
+//            NSLog("keepAlivetimer writes: \(senddata.hex)")
+            
             peer.socket?.write(senddata, withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_WRITING.rawValue)
             NSLog("BluepeerObject: send keepAlive to \(peer.displayName) @ \(peer.socket?.connectedHost)")
         }
@@ -872,8 +878,11 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
                 self.logDelegate?.didReadWrite("readHeaderTerminator2")
                 sock.readData(to: self.headerTerminator, withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_HEADER.rawValue)
             } else {
+                // take the first 4 bytes and use them as UInt of length of data. read the next 4 bytes and discard for now, might use them as version code? in future
+                
                 var length: UInt = 0
-                (dataWithoutTerminator as NSData).getBytes(&length, length: 8)
+                (dataWithoutTerminator as NSData).getBytes(&length, length: 4)
+                // ignore bytes 4-8 for now
                 NSLog("BluepeerObject: got header, reading %lu bytes...", length)
                 self.logDelegate?.didReadWrite("readBody")
                 sock.readData(toLength: length, withTimeout: Timeouts.body.rawValue, tag: DataTag.tag_BODY.rawValue)
@@ -922,12 +931,12 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
         }
     }
     
-    public func socket(_ sock: GCDAsyncSocket, didWriteDataWithTag tag: Int) {
-        guard let peer = sock.peer else {
-            return
-        }
-        self.scheduleNextKeepaliveTimer(peer)
-    }
+//    public func socket(_ sock: GCDAsyncSocket, didWriteDataWithTag tag: Int) {
+//        guard let peer = sock.peer else {
+//            return
+//        }
+//        self.scheduleNextKeepaliveTimer(peer)
+//    }
     
     public func socket(_ sock: GCDAsyncSocket, didReadPartialDataOfLength partialLength: UInt, tag: Int) {
         guard let peer = sock.peer else {
@@ -936,37 +945,36 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
         self.scheduleNextKeepaliveTimer(peer)
     }
     
-    public func socket(_ sock: GCDAsyncSocket, didWritePartialDataOfLength partialLength: UInt, tag: Int) {
-        guard let peer = sock.peer else {
-            return
-        }
-        self.scheduleNextKeepaliveTimer(peer)
-    }
+//    public func socket(_ sock: GCDAsyncSocket, didWritePartialDataOfLength partialLength: UInt, tag: Int) {
+//        guard let peer = sock.peer else {
+//            return
+//        }
+//        self.scheduleNextKeepaliveTimer(peer)
+//    }
     
     public func socket(_ sock: GCDAsyncSocket, shouldTimeoutReadWithTag tag: Int, elapsed: TimeInterval, bytesDone length: UInt) -> TimeInterval {
         return self.calcTimeExtension(sock, tag: tag)
     }
     
-    public func socket(_ sock: GCDAsyncSocket, shouldTimeoutWriteWithTag tag: Int, elapsed: TimeInterval, bytesDone length: UInt) -> TimeInterval {
-        return self.calcTimeExtension(sock, tag: tag)
-    }
+//    public func socket(_ sock: GCDAsyncSocket, shouldTimeoutWriteWithTag tag: Int, elapsed: TimeInterval, bytesDone length: UInt) -> TimeInterval {
+//        return self.calcTimeExtension(sock, tag: tag)
+//    }
     
     public func calcTimeExtension(_ sock: GCDAsyncSocket, tag: Int) -> TimeInterval {
         guard let peer = sock.peer else {
             return 0
         }
         
-        let timeSinceLastData = abs(peer.lastReceivedOrSentData.timeIntervalSinceNow)
-        if timeSinceLastData > Timeouts.header.rawValue {
+        let timeSinceLastData = abs(peer.lastReceivedData.timeIntervalSinceNow)
+        if timeSinceLastData > (2.0 * Timeouts.keepAlive.rawValue) {
             // timeout!
-            NSLog("BluepeerObject: socket timed out waiting for read/write. Tag: \(tag). Disconnecting.")
+            NSLog("BluepeerObject: socket timed out waiting for read/write - data last seen \(timeSinceLastData). Tag: \(tag). Disconnecting.")
             sock.disconnect()
             return 0
         } else {
             // extend
-            let retval: TimeInterval = Timeouts.header.rawValue / 3.0
-            NSLog("BluepeerObject: extending socket timeout by \(retval)s bc I saw data \(timeSinceLastData)s ago")
-            return retval
+            NSLog("BluepeerObject: extending socket timeout by \(Timeouts.keepAlive.rawValue)s bc I saw data \(timeSinceLastData)s ago")
+            return Timeouts.keepAlive.rawValue
         }
     }
 }
@@ -1003,5 +1011,11 @@ extension CharacterSet {
         let s = String(c)
         let result = s.rangeOfCharacter(from: self)
         return result != nil
+    }
+}
+
+extension Data {
+    var hex: String {
+        return self.map { b in String(format: "%02X", b) }.joined()
     }
 }
