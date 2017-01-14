@@ -108,9 +108,9 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
  end
 */
 
-func DLog(_ format: String, _ args: CVarArg...) {
+func DLog(_ items: Any...) {
     #if DEBUG
-        NSLog(format, args)
+        debugPrint(items)
     #endif
 }
 
@@ -270,7 +270,7 @@ func DLog(_ format: String, _ args: CVarArg...) {
             return
         }
 
-        DLog("BluepeerObject: starting advertising using port %d", serverPort)
+        DLog("BluepeerObject: starting advertising using port \(serverPort)")
 
         // type must be like: _myexampleservice._tcp  (no trailing .)
         // txtData: let's use this for RoleType. For now just shove RoleType in there!
@@ -908,7 +908,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
                 var length: UInt = 0
                 (dataWithoutTerminator as NSData).getBytes(&length, length: 4)
                 // ignore bytes 4-8 for now
-                DLog("BluepeerObject: got header, reading %lu bytes...", length)
+                DLog("BluepeerObject: got header, reading \(length) bytes...")
                 self.logDelegate?.didReadWrite("readBody")
                 sock.readData(toLength: length, withTimeout: Timeouts.body.rawValue, tag: DataTag.tag_BODY.rawValue)
             }
