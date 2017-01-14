@@ -95,6 +95,27 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
     func didReadWrite(_ logString: String)
 }
 
+/* ADD TO POD FILE
+ post_install do |installer_representation|
+   installer_representation.pods_project.targets.each do |target|
+     target.build_configurations.each do |config|
+       if config.name != 'Release'
+         config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] ||= ['$(inherited)', 'DEBUG=1']
+         config.build_settings['OTHER_SWIFT_FLAGS'] = ['$(inherited)', '-DDEBUG']
+       end
+     end
+   end
+ end
+*/
+
+func DLog(_ format: String, _ args: CVarArg...) {
+    #if DEBUG
+        NSLog(format, args)
+    #endif
+}
+
+
+
 @objc open class BluepeerObject: NSObject {
     
     var delegateQueue: DispatchQueue?
@@ -153,7 +174,6 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
         case body = 90
         case keepAlive = 30
     }
-    }
     
     // if queue isn't given, main queue is used
     public init(serviceType: String, displayName:String?, queue:DispatchQueue?, serverPort: UInt16, overBluetoothOnly:Bool, bluetoothBlock: ((_ bluetoothState: BluetoothState)->Void)?) { // serviceType must be 1-15 chars, only a-z0-9 and hyphen, eg "xd-blueprint"
@@ -176,7 +196,7 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
         self.bluetoothPeripheralManager = CBPeripheralManager.init(delegate: self, queue: nil, options: [CBCentralManagerOptionShowPowerAlertKey:0])
         NotificationCenter.default.addObserver(self, selector: #selector(didEnterBackground), name: NSNotification.Name.UIApplicationDidEnterBackground, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(willEnterForeground), name: NSNotification.Name.UIApplicationWillEnterForeground, object: nil)
-        NSLog("Initialized BluepeerObject. Name: \(self.displayName), bluetoothOnly: \(self.bluetoothOnly ? "yes" : "no")")
+        DLog("Initialized BluepeerObject. Name: \(self.displayName), bluetoothOnly: \(self.bluetoothOnly ? "yes" : "no")")
     }
     
     deinit {
@@ -185,7 +205,7 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
         self.disconnectSession()
         self.stopBrowsing()
         self.stopAdvertising()
-        NSLog("BluepeerObject: DEINIT FINISH")
+        DLog("BluepeerObject: DEINIT FINISH")
         self.endBackgroundTask()
     }
     
@@ -199,9 +219,9 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
         stopAdvertising()
         if disconnectOnBackground {
             disconnectSession()
-            NSLog("BluepeerObject: didEnterBackground - stopped browsing & advertising, and disconnected session")
+            DLog("BluepeerObject: didEnterBackground - stopped browsing & advertising, and disconnected session")
         } else {
-            NSLog("BluepeerObject: didEnterBackground - stopped browsing & advertising")
+            DLog("BluepeerObject: didEnterBackground - stopped browsing & advertising")
             self.endBackgroundTask()
         }
     }
@@ -226,7 +246,7 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
         // don't close serverSocket: expectation is that only stopAdvertising does this
         // loop through peers, disconenct all sockets
         for peer in self.peers {
-            NSLog("BluepeerObject disconnectSession: disconnecting \(peer.displayName)")
+            DLog("BluepeerObject disconnectSession: disconnecting \(peer.displayName)")
             peer.socket?.synchronouslySetDelegate(nil) // we don't want to run our disconnection logic below
             peer.socket?.disconnect()
             peer.socket = nil
@@ -246,11 +266,11 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
     
     open func startAdvertising(_ role: RoleType) {
         if let _ = self.advertising {
-            NSLog("BluepeerObject: Already advertising (no-op)")
+            DLog("BluepeerObject: Already advertising (no-op)")
             return
         }
 
-        NSLog("BluepeerObject: starting advertising using port %d", serverPort)
+        DLog("BluepeerObject: starting advertising using port %d", serverPort)
 
         // type must be like: _myexampleservice._tcp  (no trailing .)
         // txtData: let's use this for RoleType. For now just shove RoleType in there!
@@ -261,13 +281,13 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
         let cfdata: Unmanaged<CFData>? = CFNetServiceCreateTXTDataWithDictionary(kCFAllocatorDefault, swiftdict as CFDictionary)
         let txtdata = cfdata?.takeUnretainedValue()
         guard let _ = txtdata else {
-            NSLog("BluepeerObject: ERROR could not create TXTDATA nsdata")
+            DLog("BluepeerObject: ERROR could not create TXTDATA nsdata")
             return
         }
         self.publisher = HHServicePublisher.init(name: self.sanitizedDisplayName, type: self.serviceType, domain: "local.", txtData: txtdata as Data!, port: UInt(serverPort))
         
         guard let publisher = self.publisher else {
-            NSLog("BluepeerObject: could not create publisher")
+            DLog("BluepeerObject: could not create publisher")
             return
         }
         publisher.delegate = self
@@ -278,7 +298,7 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
             starting = publisher.beginPublish()
         }
         if !starting {
-            NSLog("BluepeerObject ERROR: could not start advertising")
+            DLog("BluepeerObject ERROR: could not start advertising")
             self.publisher = nil
         }
         // serverSocket is created in didPublish delegate (from HHServicePublisherDelegate) below
@@ -288,14 +308,14 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
     open func stopAdvertising() {
         if let _ = self.advertising {
             guard let publisher = self.publisher else {
-                NSLog("BluepeerObject: publisher is MIA while advertising set true! ERROR. Setting advertising=false")
+                DLog("BluepeerObject: publisher is MIA while advertising set true! ERROR. Setting advertising=false")
                 self.advertising = nil
                 return
             }
             publisher.endPublish()
-            NSLog("BluepeerObject: advertising stopped")
+            DLog("BluepeerObject: advertising stopped")
         } else {
-            NSLog("BluepeerObject: no advertising to stop (no-op)")
+            DLog("BluepeerObject: no advertising to stop (no-op)")
         }
         self.publisher = nil
         self.advertising = nil
@@ -303,19 +323,19 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
             socket.synchronouslySetDelegate(nil)
             socket.disconnect()
             self.serverSocket = nil
-            NSLog("BluepeerObject: destroyed serverSocket")
+            DLog("BluepeerObject: destroyed serverSocket")
         }
     }
     
     open func startBrowsing() {
         if self.browsing == true {
-            NSLog("BluepeerObject: Already browsing (no-op)")
+            DLog("BluepeerObject: Already browsing (no-op)")
             return
         }
 
         self.browser = HHServiceBrowser.init(type: self.serviceType, domain: "local.")
         guard let browser = self.browser else {
-            NSLog("BluepeerObject: ERROR, could not create browser")
+            DLog("BluepeerObject: ERROR, could not create browser")
             return
         }
         browser.delegate = self
@@ -324,19 +344,19 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
         } else {
             self.browsing = browser.beginBrowse()
         }
-        NSLog("BluepeerObject: now browsing")
+        DLog("BluepeerObject: now browsing")
     }
     
     open func stopBrowsing() {
         if (self.browsing) {
             if self.browser == nil {
-                NSLog("BluepeerObject: WARNING, browser is MIA while browsing set true! ")
+                DLog("BluepeerObject: WARNING, browser is MIA while browsing set true! ")
             } else {
                 self.browser!.endBrowse()
-                NSLog("BluepeerObject: browsing stopped")
+                DLog("BluepeerObject: browsing stopped")
             }
         } else {
-            NSLog("BluepeerObject: no browsing to stop")
+            DLog("BluepeerObject: no browsing to stop")
         }
         self.browser = nil
         self.browsing = false
@@ -349,7 +369,7 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
     
     open func sendData(_ datas: [Data], toPeers:[BPPeer]) throws {
         for data in datas {
-            NSLog("BluepeerObject: sending data size \(data.count) to \(toPeers.count) peers")
+            DLog("BluepeerObject: sending data size \(data.count) to \(toPeers.count) peers")
             for peer in toPeers {
                 self.logDelegate?.didReadWrite("writeSendDataToPeers")
                 self.sendDataInternal(peer, data: data)
@@ -370,7 +390,7 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
             if data.count == 0 {
                 continue
             }
-            NSLog("BluepeerObject sending data size \(data.count) to \(targetPeers.count) peers")
+            DLog("BluepeerObject sending data size \(data.count) to \(targetPeers.count) peers")
             for peer in targetPeers {
                 self.logDelegate?.didReadWrite("writeSendDataToRole")
                 self.sendDataInternal(peer, data: data)
@@ -388,7 +408,7 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
         senddata.append(self.headerTerminator)
         senddata.append(data)
         
-//        NSLog("sendDataInternal writes: \((senddata as Data).hex), payload part: \(data.hex)")
+//        DLog("sendDataInternal writes: \((senddata as Data).hex), payload part: \(data.hex)")
         peer.socket?.write(senddata as Data, withTimeout: Timeouts.body.rawValue, tag: DataTag.tag_WRITING.rawValue)
     }
     
@@ -405,7 +425,7 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
             }
 
             let delay: TimeInterval = Timeouts.keepAlive.rawValue - 5 - (Double(arc4random_uniform(5000)) / Double(1000)) // keepAlive.rawValue - 5 - (up to 5)
-            NSLog("BluepeerObject: keepalive INITIAL SCHEDULING for \(peer.displayName) in \(delay)s")
+            DLog("BluepeerObject: keepalive INITIAL SCHEDULING for \(peer.displayName) in \(delay)s")
             peer.keepaliveTimer = Timer.scheduledTimer(timeInterval: delay, target: self, selector: #selector(self.keepAliveTimerFired), userInfo: ["peer":peer], repeats: true)
         })
     }
@@ -417,12 +437,12 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
             return
         }
         guard let peer = ui["peer"] as? BPPeer else {
-            NSLog("BluepeerObject: keepAlive timer didn't find a peer, invalidating timer")
+            DLog("BluepeerObject: keepAlive timer didn't find a peer, invalidating timer")
             timer.invalidate()
             return
         }
         if peer.state != .connected || peer.socket == nil {
-            NSLog("BluepeerObject: keepAlive timer finds peer isn't connected, invalidating timer")
+            DLog("BluepeerObject: keepAlive timer finds peer isn't connected, invalidating timer")
             timer.invalidate()
             peer.keepaliveTimer = nil
         } else {
@@ -430,10 +450,10 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
             senddata.append(self.headerTerminator)
             self.logDelegate?.didReadWrite("writeKeepAlive")
             
-//            NSLog("keepAlivetimer writes: \(senddata.hex)")
+//            DLog("keepAlivetimer writes: \(senddata.hex)")
             
             peer.socket?.write(senddata, withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_WRITING.rawValue)
-            NSLog("BluepeerObject: send keepAlive to \(peer.displayName) @ \(peer.socket?.connectedHost)")
+            DLog("BluepeerObject: send keepAlive to \(peer.displayName) @ \(peer.socket?.connectedHost)")
         }
     }
     
@@ -500,29 +520,29 @@ extension BluepeerObject : HHServicePublisherDelegate {
         self.serverSocket = GCDAsyncSocket.init(delegate: self, delegateQueue: socketQueue)
         self.serverSocket?.isIPv4PreferredOverIPv6 = false
         guard let serverSocket = self.serverSocket else {
-            NSLog("BluepeerObject: ERROR - Could not create serverSocket")
+            DLog("BluepeerObject: ERROR - Could not create serverSocket")
             return
         }
         
         do {
             try serverSocket.accept(onPort: serverPort)
         } catch {
-            NSLog("BluepeerObject: ERROR accepting on serverSocket")
+            DLog("BluepeerObject: ERROR accepting on serverSocket")
             return
         }
         
-        NSLog("BluepeerObject: now advertising for service \(serviceType)")
+        DLog("BluepeerObject: now advertising for service \(serviceType)")
     }
     
     public func serviceDidNotPublish(_ servicePublisher: HHServicePublisher) {
         self.advertising = nil
-        NSLog("BluepeerObject: ERROR: serviceDidNotPublish")
+        DLog("BluepeerObject: ERROR: serviceDidNotPublish")
     }
 }
 
 extension BluepeerObject : HHServiceBrowserDelegate {
     public func serviceBrowser(_ serviceBrowser: HHServiceBrowser, didFind service: HHService, moreComing: Bool) {
-        NSLog("BluepeerObject: didFindService \(service.name), moreComing: \(moreComing)")
+        DLog("BluepeerObject: didFindService \(service.name), moreComing: \(moreComing)")
         if self.browsing == false {
             return
         }
@@ -538,9 +558,9 @@ extension BluepeerObject : HHServiceBrowserDelegate {
                 peer.displayName = service.name
                 peer.dnsService = service
                 self.peers.append(peer)
-                NSLog("BluepeerObject didFind: created new peer \(peer.displayName). Peers.count after adding: \(self.peers.count)")
+                DLog("BluepeerObject didFind: created new peer \(peer.displayName). Peers.count after adding: \(self.peers.count)")
             } else {
-                NSLog("BluepeerObject didFind: found existing peer \(peer?.displayName), replacing with newer service")
+                DLog("BluepeerObject didFind: found existing peer \(peer?.displayName), replacing with newer service")
                 peer?.dnsService?.endResolve()
                 peer?.dnsService = service
             }
@@ -555,8 +575,8 @@ extension BluepeerObject : HHServiceBrowserDelegate {
     }
     
     public func serviceBrowser(_ serviceBrowser: HHServiceBrowser, didRemove service: HHService, moreComing: Bool) {
-        NSLog("BluepeerObject: didRemoveService \(service.name) -- IGNORING")
-//        NSLog("BluepeerObject: didRemoveService \(service.name)")
+        DLog("BluepeerObject: didRemoveService \(service.name) -- IGNORING")
+//        DLog("BluepeerObject: didRemoveService \(service.name)")
 //        if let peer = self.peers.filter({ $0.dnsService == service }).first {
 //            peer.dnsService?.endResolve()
 //            peer.dnsService = nil
@@ -575,22 +595,22 @@ extension BluepeerObject : HHServiceDelegate {
         }
         
         guard let delegate = self.sessionDelegate else {
-            NSLog("BluepeerObject: WARNING, ignoring resolved service because sessionDelegate is not set")
+            DLog("BluepeerObject: WARNING, ignoring resolved service because sessionDelegate is not set")
             return
         }
         guard let txtdata = service.txtData else {
-            NSLog("BluepeerObject: serviceDidResolve IGNORING service because no txtData found")
+            DLog("BluepeerObject: serviceDidResolve IGNORING service because no txtData found")
             return
         }
         
         let cfdict: Unmanaged<CFDictionary>? = CFNetServiceCreateDictionaryWithTXTData(kCFAllocatorDefault, txtdata as CFData)
         guard let _ = cfdict else {
-            NSLog("BluepeerObject: serviceDidResolve IGNORING service because txtData was invalid")
+            DLog("BluepeerObject: serviceDidResolve IGNORING service because txtData was invalid")
             return
         }
         let dict: NSDictionary = cfdict!.takeUnretainedValue()
         guard let roleData = dict["role"] as? Data else {
-            NSLog("BluepeerObject: serviceDidResolve IGNORING service because role was missing")
+            DLog("BluepeerObject: serviceDidResolve IGNORING service because role was missing")
             return
         }
         let roleStr = String.init(data: roleData, encoding: String.Encoding.utf8)
@@ -600,43 +620,43 @@ extension BluepeerObject : HHServiceDelegate {
             return
         }
         guard let peer = self.peers.filter({ $0.dnsService == service }).first else {
-            NSLog("BluepeerObject: serviceDidResolve FAILED, should have found a peer")
+            DLog("BluepeerObject: serviceDidResolve FAILED, should have found a peer")
             assert(false)
             return
         }
         guard let hhaddresses: [HHAddressInfo] = service.resolvedAddressInfo, hhaddresses.count > 0 else {
-            NSLog("BluepeerObject: serviceDidResolve IGNORING service because could not get resolvedAddressInfo")
+            DLog("BluepeerObject: serviceDidResolve IGNORING service because could not get resolvedAddressInfo")
             return
         }
         
         peer.role = role
-        NSLog("BluepeerObject: serviceDidResolve, name: \(service.name), role: \(roleStr), announced: \(peer.announced), addresses: \(hhaddresses.count)")
+        DLog("BluepeerObject: serviceDidResolve, name: \(service.name), role: \(roleStr), announced: \(peer.announced), addresses: \(hhaddresses.count)")
         
         // should we annouce? if we have at least one candidate address, yes.
         var limitToBluetooth = self.bluetoothOnly
         let candidates = hhaddresses.filter({ $0.isCandidateAddress(bluetoothOnly: limitToBluetooth) })
         if peer.announced {
-            NSLog("... already announced, not continuing")
+            DLog("... already announced, not continuing")
             return
         } else if candidates.count == 0 {
-            NSLog("... no candidates out of \(hhaddresses.count) addresses, not announcing. moreComing = \(moreComing)")
+            DLog("... no candidates out of \(hhaddresses.count) addresses, not announcing. moreComing = \(moreComing)")
             if hhaddresses.count > 1 && !moreComing {
                 if (self.browsingWorkaroundRestarts >= 3) {
-                    NSLog(" *** workarounds exhausted! falling back to not bluetoothOnly")
+                    DLog(" *** workarounds exhausted! falling back to not bluetoothOnly")
                     self.browsingWorkaroundRestarts = 0
                     limitToBluetooth = false
                     let secondaryCandidates = hhaddresses.filter({ $0.isCandidateAddress(bluetoothOnly: limitToBluetooth) })
                     if (secondaryCandidates.count > 0) {
-                        NSLog("... announcing now")
+                        DLog("... announcing now")
                         peer.announced = true
                     } else {
-                        NSLog("... STILL no candidates. Bummer.")
+                        DLog("... STILL no candidates. Bummer.")
                         return
                     }
                     
                 } else {
                     self.browsingWorkaroundRestarts += 1
-                    NSLog(" *** workaround for BT radio connection delay: restarting browsing, \(self.browsingWorkaroundRestarts) of 3")
+                    DLog(" *** workaround for BT radio connection delay: restarting browsing, \(self.browsingWorkaroundRestarts) of 3")
                     self.stopBrowsing()
                     if let indexOfPeer = self.peers.index(of: peer) {
                         self.peers.remove(at: indexOfPeer)
@@ -650,7 +670,7 @@ extension BluepeerObject : HHServiceDelegate {
                 return
             }
         } else {
-            NSLog("... announcing now")
+            DLog("... announcing now")
             peer.announced = true
         }
         
@@ -659,7 +679,7 @@ extension BluepeerObject : HHServiceDelegate {
                 do {
                     // pick the address to connect to INSIDE the block, because more addresses may have been added between announcement and inviteBlock being executed
                     guard let hhaddresses = peer.dnsService?.resolvedAddressInfo, hhaddresses.count > 0, var chosenAddress = hhaddresses.filter({ $0.isCandidateAddress(bluetoothOnly: limitToBluetooth) }).first else {
-                        NSLog("BluepeerObject inviteBlock: ERROR, no resolvedAddresses or candidates!?!")
+                        DLog("BluepeerObject inviteBlock: ERROR, no resolvedAddresses or candidates!?!")
                         assert(false)
                         return
                     }
@@ -672,13 +692,13 @@ extension BluepeerObject : HHServiceDelegate {
                         }
                     }
                     
-                    NSLog("BluepeerObject inviteBlock: peer has \(hhaddresses.count) addresses, chose \(chosenAddress.addressAndPortString) on interface \(chosenAddress.interfaceName)")
+                    DLog("BluepeerObject inviteBlock: peer has \(hhaddresses.count) addresses, chose \(chosenAddress.addressAndPortString) on interface \(chosenAddress.interfaceName)")
                     let sockdata = chosenAddress.socketAsData()
                     
                     self.stopBrowsing() // stop browsing once user has done something. Destroys all HHService except this one!
                     
                     if let oldSocket = peer.socket {
-                        NSLog("**** BluepeerObject: PEER ALREADY HAD SOCKET, DESTROYING...")
+                        DLog("**** BluepeerObject: PEER ALREADY HAD SOCKET, DESTROYING...")
                         oldSocket.synchronouslySetDelegate(nil)
                         oldSocket.disconnect()
                         peer.socket = nil
@@ -689,7 +709,7 @@ extension BluepeerObject : HHServiceDelegate {
                     peer.state = .connecting
                     try peer.socket?.connect(toAddress: sockdata, viaInterface: chosenAddress.interfaceName, withTimeout: timeoutForInvite)
                 } catch {
-                    NSLog("BluepeerObject: could not connect.")
+                    DLog("BluepeerObject: could not connect.")
                 }
             })
         })
@@ -697,7 +717,7 @@ extension BluepeerObject : HHServiceDelegate {
 
     
     public func serviceDidNotResolve(_ service: HHService) {
-        NSLog("BluepeerObject: ERROR, service did not resolve: \(service.name)")
+        DLog("BluepeerObject: ERROR, service did not resolve: \(service.name)")
     }
 }
 
@@ -742,7 +762,7 @@ extension HHAddressInfo {
     func IP() -> String? {
         let ipAndPort = self.addressAndPortString
         guard let lastColonIndex = ipAndPort.range(of: ":", options: .backwards)?.lowerBound else {
-            NSLog("ERROR: unexpected return of IP address with port")
+            DLog("ERROR: unexpected return of IP address with port")
             assert(false, "error")
             return nil
         }
@@ -762,7 +782,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
         
         if self.sessionDelegate != nil {
             guard let connectedHost = newSocket.connectedHost else {
-                NSLog("BluepeerObject: ERROR, accepted newSocket has no connectedHost (no-op)")
+                DLog("BluepeerObject: ERROR, accepted newSocket has no connectedHost (no-op)")
                 return
             }
             newSocket.delegate = self
@@ -772,23 +792,23 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             newPeer.role = .client
             newPeer.socket = newSocket
             self.peers.append(newPeer) // always add as a new peer, even if it already exists
-            NSLog("BluepeerObject: accepting new connection from \(connectedHost). Peers.count after add: \(self.peers.count)")
+            DLog("BluepeerObject: accepting new connection from \(connectedHost). Peers.count after add: \(self.peers.count)")
             
             // CONVENTION: CLIENT sends SERVER 32 bytes of its name -- UTF-8 string
             self.logDelegate?.didReadWrite("readName")
             newSocket.readData(toLength: 32, withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_NAME.rawValue)
         } else {
-            NSLog("BluepeerObject: WARNING, ignoring connection attempt because I don't have a sessionDelegate assigned")
+            DLog("BluepeerObject: WARNING, ignoring connection attempt because I don't have a sessionDelegate assigned")
         }
     }
     
     public func socket(_ sock: GCDAsyncSocket, didConnectToHost host: String, port: UInt16) {
         guard let peer = sock.peer else {
-            NSLog("BluepeerObject: WARNING, did not find peer in didConnectToHost, doing nothing")
+            DLog("BluepeerObject: WARNING, did not find peer in didConnectToHost, doing nothing")
             return
         }
         peer.state = .awaitingAuth
-        NSLog("BluepeerObject: got to state = awaitingAuth with \(sock.connectedHost), sending name then awaiting ACK ('0')")
+        DLog("BluepeerObject: got to state = awaitingAuth with \(sock.connectedHost), sending name then awaiting ACK ('0')")
         
         // make 32-byte UTF-8 name
         let strData = NSMutableData.init(capacity: 32)
@@ -797,7 +817,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
                 if thisData.count + (strData?.length)! < 32 {
                     strData?.append(thisData)
                 } else {
-                    NSLog("BluepeerObject: max displayName length reached, truncating")
+                    DLog("BluepeerObject: max displayName length reached, truncating")
                     break
                 }
             }
@@ -806,6 +826,8 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
         let paddedStrData: NSMutableData = ("                                ".data(using: String.Encoding.utf8) as NSData?)?.mutableCopy() as! NSMutableData // that's 32 spaces :)
         paddedStrData.replaceBytes(in: NSMakeRange(0, strData!.length), withBytes: (strData?.bytes)!)
         self.logDelegate?.didReadWrite("writeName")
+        
+        DLog("didConnect, writing name: \((paddedStrData as Data).hex)")
         sock.write(paddedStrData as Data, withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_WRITING.rawValue)
         
         // now await auth
@@ -815,7 +837,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
     
     public func socketDidDisconnect(_ sock: GCDAsyncSocket, withError err: Error?) {
         guard let peerIndex = self.peers.index(where: {sock == $0.socket}) else {
-            NSLog("BluepeerObject socketDidDisconnect: WARNING, expected to find a peer, calling peerConnectionAttemptFailed")
+            DLog("BluepeerObject socketDidDisconnect: WARNING, expected to find a peer, calling peerConnectionAttemptFailed")
             sock.synchronouslySetDelegate(nil)
             self.dispatch_on_delegate_queue({
                 self.sessionDelegate?.peerConnectionAttemptFailed?(.unknown, peer: nil, isAuthRejection: false)
@@ -823,7 +845,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             return
         }
         let peer = self.peers[peerIndex]
-        NSLog("BluepeerObject: \(peer.displayName) @ \(peer.socket?.connectedHost) disconnected. Peers.count: \(self.peers.count)")
+        DLog("BluepeerObject: \(peer.displayName) @ \(peer.socket?.connectedHost) disconnected. Peers.count: \(self.peers.count)")
         let oldState = peer.state
         peer.state = .notConnected
         peer.keepaliveTimer?.invalidate()
@@ -833,13 +855,13 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
         switch oldState {
         case .connected:
             self.peers.remove(at: peerIndex)
-            NSLog("BluepeerObject: removed peer. New peers.count: \(self.peers.count)")
+            DLog("BluepeerObject: removed peer. New peers.count: \(self.peers.count)")
             self.dispatch_on_delegate_queue({
                 self.sessionDelegate?.peerDidDisconnect?(peer.role, peer: peer)
             })
         case .notConnected:
             self.peers.remove(at: peerIndex)
-            NSLog("BluepeerObject: removed peer. New peers.count: \(self.peers.count)")
+            DLog("BluepeerObject: removed peer. New peers.count: \(self.peers.count)")
             assert(false, "ERROR: state is being tracked wrong")
         case .connecting, .awaitingAuth:
             // don't remove peer in this case
@@ -850,8 +872,11 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
     }
     
     public func socket(_ sock: GCDAsyncSocket, didRead data: Data, withTag tag: Int) {
+        
+//        DLog("socket reads: \(data.hex)")
+        
         guard let peer = sock.peer else {
-            NSLog("BluepeerObject: WARNING, did not find peer in didReadData, doing nothing")
+            DLog("BluepeerObject: WARNING, did not find peer in didReadData, doing nothing")
             return
         }
         self.scheduleNextKeepaliveTimer(peer)
@@ -874,7 +899,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             let range = 0..<data.count-self.headerTerminator.count
             let dataWithoutTerminator = data.subdata(in: Range(range))
             if dataWithoutTerminator == self.keepAliveHeader {
-                NSLog("BluepeerObject: got keepalive")
+                DLog("BluepeerObject: got keepalive")
                 self.logDelegate?.didReadWrite("readHeaderTerminator2")
                 sock.readData(to: self.headerTerminator, withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_HEADER.rawValue)
             } else {
@@ -883,7 +908,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
                 var length: UInt = 0
                 (dataWithoutTerminator as NSData).getBytes(&length, length: 4)
                 // ignore bytes 4-8 for now
-                NSLog("BluepeerObject: got header, reading %lu bytes...", length)
+                DLog("BluepeerObject: got header, reading %lu bytes...", length)
                 self.logDelegate?.didReadWrite("readBody")
                 sock.readData(toLength: length, withTimeout: Timeouts.body.rawValue, tag: DataTag.tag_BODY.rawValue)
             }
@@ -905,7 +930,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
                             // CONVENTION: SERVER sends CLIENT a single 0 to show connection has been accepted, since it isn't possible to send a header for a payload of size zero except here.
                             self.logDelegate?.didReadWrite("writeAcceptance")
                             sock.write(Data.init(count: 1), withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_WRITING.rawValue)
-                            NSLog("... accepted (by my delegate)")
+                            DLog("... accepted (by my delegate)")
                             self.dispatch_on_delegate_queue({
                                 self.sessionDelegate?.peerDidConnect?(.client, peer: peer)
                             })
@@ -916,7 +941,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
                             sock.synchronouslySetDelegate(nil)
                             sock.disconnect()
                             peer.socket = nil
-                            NSLog("... rejected (by my delegate), or no longer connected")
+                            DLog("... rejected (by my delegate), or no longer connected")
                         }
                     })
                 })
@@ -931,13 +956,6 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
         }
     }
     
-//    public func socket(_ sock: GCDAsyncSocket, didWriteDataWithTag tag: Int) {
-//        guard let peer = sock.peer else {
-//            return
-//        }
-//        self.scheduleNextKeepaliveTimer(peer)
-//    }
-    
     public func socket(_ sock: GCDAsyncSocket, didReadPartialDataOfLength partialLength: UInt, tag: Int) {
         guard let peer = sock.peer else {
             return
@@ -945,20 +963,9 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
         self.scheduleNextKeepaliveTimer(peer)
     }
     
-//    public func socket(_ sock: GCDAsyncSocket, didWritePartialDataOfLength partialLength: UInt, tag: Int) {
-//        guard let peer = sock.peer else {
-//            return
-//        }
-//        self.scheduleNextKeepaliveTimer(peer)
-//    }
-    
     public func socket(_ sock: GCDAsyncSocket, shouldTimeoutReadWithTag tag: Int, elapsed: TimeInterval, bytesDone length: UInt) -> TimeInterval {
         return self.calcTimeExtension(sock, tag: tag)
     }
-    
-//    public func socket(_ sock: GCDAsyncSocket, shouldTimeoutWriteWithTag tag: Int, elapsed: TimeInterval, bytesDone length: UInt) -> TimeInterval {
-//        return self.calcTimeExtension(sock, tag: tag)
-//    }
     
     public func calcTimeExtension(_ sock: GCDAsyncSocket, tag: Int) -> TimeInterval {
         guard let peer = sock.peer else {
@@ -968,12 +975,12 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
         let timeSinceLastData = abs(peer.lastReceivedData.timeIntervalSinceNow)
         if timeSinceLastData > (2.0 * Timeouts.keepAlive.rawValue) {
             // timeout!
-            NSLog("BluepeerObject: socket timed out waiting for read/write - data last seen \(timeSinceLastData). Tag: \(tag). Disconnecting.")
+            DLog("BluepeerObject: socket timed out waiting for read/write - data last seen \(timeSinceLastData). Tag: \(tag). Disconnecting.")
             sock.disconnect()
             return 0
         } else {
             // extend
-            NSLog("BluepeerObject: extending socket timeout by \(Timeouts.keepAlive.rawValue)s bc I saw data \(timeSinceLastData)s ago")
+            DLog("BluepeerObject: extending socket timeout by \(Timeouts.keepAlive.rawValue)s bc I saw data \(timeSinceLastData)s ago")
             return Timeouts.keepAlive.rawValue
         }
     }
@@ -981,25 +988,25 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
 
 extension BluepeerObject: CBPeripheralManagerDelegate {
     public func peripheralManagerDidUpdateState(_ peripheral: CBPeripheralManager) {
-        NSLog("Bluetooth status: ")
+        DLog("Bluetooth status: ")
         switch (self.bluetoothPeripheralManager.state) {
         case .unknown:
-            NSLog("Unknown")
+            DLog("Unknown")
             self.bluetoothState = .unknown
         case .resetting:
-            NSLog("Resetting")
+            DLog("Resetting")
             self.bluetoothState = .other
         case .unsupported:
-            NSLog("Unsupported")
+            DLog("Unsupported")
             self.bluetoothState = .other
         case .unauthorized:
-            NSLog("Unauthorized")
+            DLog("Unauthorized")
             self.bluetoothState = .other
         case .poweredOff:
-            NSLog("PoweredOff")
+            DLog("PoweredOff")
             self.bluetoothState = .poweredOff
         case .poweredOn:
-            NSLog("PoweredOn")
+            DLog("PoweredOn")
             self.bluetoothState = .poweredOn
         }
         self.bluetoothBlock?(self.bluetoothState)
