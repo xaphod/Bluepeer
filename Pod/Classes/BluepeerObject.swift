@@ -159,7 +159,7 @@ func DLog(_ items: Any...) {
     let keepAliveHeader: Data = "0 ! 0 ! 0 ! 0 ! 0 ! 0 ! 0 ! ".data(using: String.Encoding.utf8)! // A special header kept to avoid timeouts
     let socketQueue = DispatchQueue(label: "xaphod.bluepeer.socketQueue", attributes: [])
     var browsingWorkaroundRestarts = 0
-    var backgroundTask: UIBackgroundTaskIdentifier?
+//    var backgroundTask: UIBackgroundTaskIdentifier?
     
     enum DataTag: Int {
         case tag_HEADER = 1
@@ -209,11 +209,21 @@ func DLog(_ items: Any...) {
         self.endBackgroundTask()
     }
     
+//    func isAppExtension() -> Bool {
+//        guard let bundleExecPath = Bundle.main.executablePath else {
+//            assert(false, "ERROR")
+//            return false
+//        }
+//        return bundleExecPath.hasSuffix(".appex")
+//    }
+    
     // Note: if I disconnect, then my delegate is expected to reconnect if needed.
     func didEnterBackground() {
-        self.backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "BluepeerBackgroundedTask", expirationHandler: {
-            self.endBackgroundTask()
-        })
+//        if (!isAppExtension()) {
+//            self.backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "BluepeerBackgroundedTask", expirationHandler: {
+//                self.endBackgroundTask()
+//            })
+//        }
         self.onLastBackground = (self.advertising, self.browsing)
         stopBrowsing()
         stopAdvertising()
@@ -227,10 +237,12 @@ func DLog(_ items: Any...) {
     }
     
     func endBackgroundTask() {
-        if let backgroundTask = self.backgroundTask {
-            UIApplication.shared.endBackgroundTask(backgroundTask)
-        }
-        self.backgroundTask = UIBackgroundTaskInvalid
+//        if (!isAppExtension()) {
+//            if let backgroundTask = self.backgroundTask {
+//                UIApplication.shared.endBackgroundTask(backgroundTask)
+//                self.backgroundTask = UIBackgroundTaskInvalid
+//            }
+//        }
     }
     
     func willEnterForeground() {
