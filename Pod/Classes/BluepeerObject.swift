@@ -1000,6 +1000,10 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
 
 extension BluepeerObject: CBPeripheralManagerDelegate {
     public func peripheralManagerDidUpdateState(_ peripheral: CBPeripheralManager) {
+        guard self.bluetoothPeripheralManager != nil else {
+            DLog("!!!!!! BluepeerObject bluetooth state change with no bluetoothPeripheralManager !!!!!")
+            return
+        }
         DLog("Bluetooth status: ")
         switch (self.bluetoothPeripheralManager.state) {
         case .unknown:
