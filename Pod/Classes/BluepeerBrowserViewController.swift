@@ -11,7 +11,8 @@ import xaphodObjCUtils
 @objc open class BluepeerBrowserViewController: UITableViewController {
 
     var bluepeerObject: BluepeerObject?
-    var bluepeerSuperSessionDelegate: BluepeerSessionManagerDelegate?
+    var bluepeerSuperAdminDelegate: BluepeerMembershipAdminDelegate?
+    var bluepeerSuperRosterDelegate: BluepeerMembershipRosterDelegate?
     open var browserCompletionBlock: ((Bool) -> ())?
     var peers: [(peer: BPPeer, inviteBlock: (_ timeoutForInvite: TimeInterval) -> Void)] = []
     var progressView: XaphodProgressView?
@@ -37,8 +38,10 @@ import xaphodObjCUtils
             assert(false, "ERROR: set bluepeerObject before loading view")
             return
         }
-        self.bluepeerSuperSessionDelegate = bo.sessionDelegate
-        bo.sessionDelegate = self
+        self.bluepeerSuperAdminDelegate = bo.membershipAdminDelegate
+        self.bluepeerSuperRosterDelegate = bo.membershipRosterDelegate
+        bo.membershipRosterDelegate = self
+        bo.membershipAdminDelegate = self
         bo.startBrowsing()
     }
     
@@ -49,7 +52,8 @@ import xaphodObjCUtils
     override open func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         self.bluepeerObject?.stopBrowsing()
-        self.bluepeerObject?.sessionDelegate = self.bluepeerSuperSessionDelegate
+        self.bluepeerObject?.membershipAdminDelegate = self.bluepeerSuperAdminDelegate
+        self.bluepeerObject?.membershipRosterDelegate = self.bluepeerSuperRosterDelegate
         self.bluepeerObject = nil
         self.lastTimerStarted = nil
         self.timer?.invalidate()
@@ -128,7 +132,7 @@ import xaphodObjCUtils
     }
 }
 
-extension BluepeerBrowserViewController: BluepeerSessionManagerDelegate {
+extension BluepeerBrowserViewController: BluepeerMembershipRosterDelegate {
     
     public func peerDidConnect(_ peerRole: RoleType, peer: BPPeer) {
         DispatchQueue.main.async(execute: {
@@ -158,25 +162,29 @@ extension BluepeerBrowserViewController: BluepeerSessionManagerDelegate {
             })
         })
     }
+}
+
+extension BluepeerBrowserViewController: BluepeerMembershipAdminDelegate {
 
     public func browserFoundPeer(_ role: RoleType, peer: BPPeer, inviteBlock: @escaping (_ timeoutForInvite: TimeInterval) -> Void) {
         DispatchQueue.main.async(execute: {
+            self.bluepeerObject?.stopBrowsing()
             self.peers.append((peer: peer, inviteBlock: inviteBlock))
             self.tableView.reloadData()
         })
     }
     
-    public func browserLostPeer(_ role: RoleType, peer: BPPeer) {
-        DispatchQueue.main.async(execute: {
-            self.progressView?.dismiss(withAnimation: false)
-            self.progressView = nil
-            self.lastTimerStarted = nil
-            self.timer?.invalidate()
-            self.timer = nil
-            if let index = self.peers.index(where: {$0.0 == peer}) {
-                self.peers.remove(at: index)
-                self.tableView.reloadData()
-            }
-        })
-    }
+//    public func browserLostPeer(_ role: RoleType, peer: BPPeer) {
+//        DispatchQueue.main.async(execute: {
+//            self.progressView?.dismiss(withAnimation: false)
+//            self.progressView = nil
+//            self.lastTimerStarted = nil
+//            self.timer?.invalidate()
+//            self.timer = nil
+//            if let index = self.peers.index(where: {$0.0 == peer}) {
+//                self.peers.remove(at: index)
+//                self.tableView.reloadData()
+//            }
+//        })
+//    }
 }
