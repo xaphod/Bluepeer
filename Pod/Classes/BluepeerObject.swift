@@ -113,7 +113,21 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
 
 func DLog(_ items: Any...) {
     #if DEBUG
-        debugPrint(items)
+        let formatter = DateFormatter.init()
+        formatter.dateStyle = .none
+        formatter.timeStyle = .medium
+        var str = ""
+        for item in items {
+            if let item = item as? String {
+                str += item
+            } else if let item = item as? AnyObject {
+                str += item.debugDescription
+            } else {
+                str += String(describing: item)
+            }
+        }
+        
+        debugPrint("BP " + formatter.string(from: Date.init()) + " - " + str)
     #endif
 }
 
@@ -130,26 +144,10 @@ func DLog(_ items: Any...) {
     var advertisingCustomData: [String:String]?
     open var browsing: Bool = false
     var onLastBackground: (advertising: RoleType?, browsing: Bool, customData: [String:String]?) = (nil, false, nil)
-    open var serviceType: String
+    open var serviceType: String = ""
     var serverPort: UInt16 = 0
     var versionString: String = "unknown"
-    var displayName: String = UIDevice.current.name
-    var sanitizedDisplayName: String {
-        // sanitize name
-        var retval = self.displayName //.lowercased()
-        if retval.characters.count > 15 {
-            retval = retval.substring(to: retval.characters.index(retval.startIndex, offsetBy: 15))
-        }
-        let acceptableChars = CharacterSet.init(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz1234567890-")
-        retval = String(retval.characters.map { (char: Character) in
-            if acceptableChars.containsCharacter(char) == false {
-                return "-"
-            } else {
-                return char
-            }
-        })
-        return retval
-    }
+    var displayNameSanitized: String = ""
     
     weak open var membershipAdminDelegate: BluepeerMembershipAdminDelegate?
     weak open var membershipRosterDelegate: BluepeerMembershipRosterDelegate?
@@ -181,17 +179,26 @@ func DLog(_ items: Any...) {
     }
     
     // if queue isn't given, main queue is used
-    public init(serviceType: String, displayName:String?, queue:DispatchQueue?, serverPort: UInt16, overBluetoothOnly:Bool, bluetoothBlock: ((_ bluetoothState: BluetoothState)->Void)?) { // serviceType must be 1-15 chars, only a-z0-9 and hyphen, eg "xd-blueprint"
+    public init?(serviceType: String, displayName:String?, queue:DispatchQueue?, serverPort: UInt16, overBluetoothOnly:Bool, bluetoothBlock: ((_ bluetoothState: BluetoothState)->Void)?) {
+        
+        super.init()
+        
+        // serviceType must be 1-15 chars, only a-z0-9 and hyphen, eg "xd-blueprint"
+        if serviceType.characters.count > 15 {
+            assert(false, "ERROR: service name is too long")
+            return nil
+        }
+        self.serviceType = "_" + self.sanitizeCharsToDNSChars(str: serviceType) + "._tcp"
+        
         self.serverPort = serverPort
-        self.serviceType = "_" + serviceType + "._tcp"
         self.bluetoothOnly = overBluetoothOnly
         self.delegateQueue = queue
         
-        super.init()
-
-        if let name = displayName {
-            self.displayName = name.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
+        var name = UIDevice.current.name
+        if let displayName = displayName {
+            name = displayName
         }
+        self.displayNameSanitized = self.sanitizeStringAsDNSName(str: name)
 
         if let bundleVersionString = Bundle.main.infoDictionary?["CFBundleVersion"] as? String {
             versionString = bundleVersionString
@@ -201,7 +208,7 @@ func DLog(_ items: Any...) {
         self.bluetoothPeripheralManager = CBPeripheralManager.init(delegate: self, queue: nil, options: [CBCentralManagerOptionShowPowerAlertKey:0])
         NotificationCenter.default.addObserver(self, selector: #selector(didEnterBackground), name: NSNotification.Name.UIApplicationDidEnterBackground, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(willEnterForeground), name: NSNotification.Name.UIApplicationWillEnterForeground, object: nil)
-        DLog("Initialized BluepeerObject. Name: \(self.displayName), bluetoothOnly: \(self.bluetoothOnly ? "yes" : "no")")
+        DLog("Initialized BluepeerObject. Name: \(self.displayNameSanitized), bluetoothOnly: \(self.bluetoothOnly ? "yes" : "no")")
     }
     
     deinit {
@@ -259,6 +266,50 @@ func DLog(_ items: Any...) {
         }
     }
     
+    func sanitizeCharsToDNSChars(str: String) -> String {
+        let acceptableChars = CharacterSet.init(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz1234567890-")
+        return String(str.characters.filter({ $0 != "'"}).map { (char: Character) in
+            if acceptableChars.containsCharacter(char) == false {
+                return "-"
+            } else {
+                return char
+            }
+        })
+    }
+    
+    // per DNSServiceRegister called by HHServices, the String must be at most 63 bytes of UTF8 data. But, Bluepeer sends 32-byte name strings as part of its connection buildup, so limit this to max 32 bytes. The name is used to uniquely identify devices, and devices might have the same name (ie. "iPhone"), so append some random numbers to the end
+    // returns: the given string with an identifier appended on the end, guaranteed to be max 32 bytes
+    func sanitizeStringAsDNSName(str: String) -> String {
+        // first sanitize name by getting rid of invalid chars
+        var retval = self.sanitizeCharsToDNSChars(str: str)
+        
+        // we need to append "-NNNN" to the end, which is 5 bytes in UTF8. So, the name part can be max 32-5 bytes = 27 bytes
+        // characters take up different amounts of bytes in UTF8, so let's be careful to count them
+        var strData = Data.init(capacity: 32)
+        
+        // make 27-byte UTF-8 name
+        for c in retval.characters {
+            if let thisData = String.init(c).data(using: String.Encoding.utf8) {
+                if thisData.count + (strData.count) <= 27 {
+                    strData.append(thisData)
+                } else {
+                    break
+                }
+            } else {
+                assert(false, "ERROR: non-UTF8 chars found")
+            }
+        }
+
+        strData.append(String.init("-").data(using: String.Encoding.utf8)!)
+        for _ in 1...4 {
+            strData.append(String.init(arc4random_uniform(10)).data(using: String.Encoding.utf8)!)
+        }
+        
+        retval = String.init(data: strData, encoding: String.Encoding.utf8)!
+        DLog("BluepeerObject: sanitized \(str) to \(retval)")
+        return retval
+    }
+    
     open func disconnectSession() {
         // don't close serverSocket: expectation is that only stopAdvertising does this
         // loop through peers, disconenct all sockets
@@ -306,7 +357,7 @@ func DLog(_ items: Any...) {
             DLog("BluepeerObject: ERROR could not create TXTDATA nsdata")
             return
         }
-        self.publisher = HHServicePublisher.init(name: self.sanitizedDisplayName, type: self.serviceType, domain: "local.", txtData: txtdata as Data!, port: UInt(serverPort))
+        self.publisher = HHServicePublisher.init(name: self.displayNameSanitized, type: self.serviceType, domain: "local.", txtData: txtdata as Data!, port: UInt(serverPort))
         
         guard let publisher = self.publisher else {
             DLog("BluepeerObject: could not create publisher")
@@ -471,7 +522,7 @@ func DLog(_ items: Any...) {
         } else {
             var senddata = NSData.init(data: self.keepAliveHeader) as Data
             senddata.append(self.headerTerminator)
-            self.logDelegate?.didReadWrite("writeKeepAlive")
+            self.logDelegate?.didReadWrite("writeKeepAlive to \(peer.displayName)")
             
 //            DLog("keepAlivetimer writes: \(senddata.hex)")
             
@@ -568,7 +619,7 @@ extension BluepeerObject : HHServiceBrowserDelegate {
         if self.browsing == false {
             return
         }
-        if self.sanitizedDisplayName == service.name {
+        if self.displayNameSanitized == service.name {
             DLog("BluepeerObject: found my own published service, ignoring...")
             return
         }
@@ -839,13 +890,12 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
                 return
             }
             newSocket.delegate = self
-            
             let newPeer = BPPeer.init()
             newPeer.state = .awaitingAuth
             newPeer.role = .client
             newPeer.socket = newSocket
-            self.peers.append(newPeer) // always add as a new peer, even if it already exists
-            DLog("BluepeerObject: accepting new connection from \(connectedHost). Peers.count after add: \(self.peers.count)")
+            self.peers.append(newPeer) // always add as a new peer, even if it already exists. This might result in a dupe if we are browsing and advertising for same service. The original will get removed on receiving the name of other device, if it matches
+            DLog("BluepeerObject: accepting new connection from \(connectedHost). Peers.count after adding: \(self.peers.count)")
             
             // CONVENTION: CLIENT sends SERVER 32 bytes of its name -- UTF-8 string
             self.logDelegate?.didReadWrite("readName")
@@ -862,29 +912,17 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
         }
         peer.state = .awaitingAuth
         DLog("BluepeerObject: got to state = awaitingAuth with \(sock.connectedHost), sending name then awaiting ACK ('0')")
-        
-        // make 32-byte UTF-8 name
-        let strData = NSMutableData.init(capacity: 32)
-        for c in self.displayName.characters {
-            if let thisData = String.init(c).data(using: String.Encoding.utf8) {
-                if thisData.count + (strData?.length)! < 32 {
-                    strData?.append(thisData)
-                } else {
-                    DLog("BluepeerObject: max displayName length reached, truncating")
-                    break
-                }
-            }
-        }
-        // pad to 32 bytes!
+        let strData = self.displayNameSanitized.data(using: String.Encoding.utf8)! as NSData
+        // Other side is expecting to receive EXACTLY 32 bytes so pad to 32 bytes!
         let paddedStrData: NSMutableData = ("                                ".data(using: String.Encoding.utf8) as NSData?)?.mutableCopy() as! NSMutableData // that's 32 spaces :)
-        paddedStrData.replaceBytes(in: NSMakeRange(0, strData!.length), withBytes: (strData?.bytes)!)
+        paddedStrData.replaceBytes(in: NSMakeRange(0, strData.length), withBytes: strData.bytes)
         self.logDelegate?.didReadWrite("writeName")
         
         DLog("didConnect, writing name: \((paddedStrData as Data).hex)")
         sock.write(paddedStrData as Data, withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_WRITING.rawValue)
         
         // now await auth
-        self.logDelegate?.didReadWrite("readAuth")
+        self.logDelegate?.didReadWrite("waitToReadAuth")
         sock.readData(toLength: 1, withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_AUTH.rawValue)
     }
     
@@ -924,6 +962,13 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
         }
     }
     
+    fileprivate func bailOn(socket: GCDAsyncSocket?, peer: BPPeer) {
+        peer.state = .notConnected
+        socket?.synchronouslySetDelegate(nil)
+        socket?.disconnect()
+        peer.socket = nil
+    }
+    
     public func socket(_ sock: GCDAsyncSocket, didRead data: Data, withTag tag: Int) {
         
 //        DLog("socket reads: \(data.hex)")
@@ -935,16 +980,23 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
         self.scheduleNextKeepaliveTimer(peer)
 
         if tag == DataTag.tag_AUTH.rawValue {
-            assert(data.count == 1, "ERROR: not right length of bytes")
+            if data.count != 1 {
+                assert(false, "ERROR: not right length of bytes")
+                self.bailOn(socket: sock, peer: peer)
+                return
+            }
             var ack: UInt8 = 1
             (data as NSData).getBytes(&ack, length: 1)
-            assert(ack == 0, "ERROR: not the right ACK")
-            assert(peer.state == .awaitingAuth, "ERROR: expect I only get this while awaiting auth")
+            if (ack != 0 || peer.state != .awaitingAuth) {
+                assert(false, "ERROR: not the right ACK, or state was not .awaitingAuth as expected")
+                self.bailOn(socket: sock, peer: peer)
+                return
+            }
             peer.state = .connected // CLIENT becomes connected
             self.dispatch_on_delegate_queue({
                 self.membershipRosterDelegate?.peerDidConnect?(peer.role, peer: peer)
             })
-            self.logDelegate?.didReadWrite("readHeaderTerminator1")
+            self.logDelegate?.didReadWrite("peerState=connected (auth OK), readHeaderTerminator1")
             sock.readData(to: self.headerTerminator, withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_HEADER.rawValue)
             
         } else if tag == DataTag.tag_HEADER.rawValue {
@@ -953,7 +1005,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             let dataWithoutTerminator = data.subdata(in: Range(range))
             if dataWithoutTerminator == self.keepAliveHeader {
                 DLog("BluepeerObject: got keepalive")
-                self.logDelegate?.didReadWrite("readHeaderTerminator2")
+                self.logDelegate?.didReadWrite("readKeepAlive from \(peer.displayName)")
                 sock.readData(to: self.headerTerminator, withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_HEADER.rawValue)
             } else {
                 // take the first 4 bytes and use them as UInt of length of data. read the next 4 bytes and discard for now, might use them as version code? in future
@@ -962,7 +1014,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
                 (dataWithoutTerminator as NSData).getBytes(&length, length: 4)
                 // ignore bytes 4-8 for now
                 DLog("BluepeerObject: got header, reading \(length) bytes...")
-                self.logDelegate?.didReadWrite("readBody")
+                self.logDelegate?.didReadWrite("readBodyAfterHeader")
                 sock.readData(toLength: length, withTimeout: Timeouts.body.rawValue, tag: DataTag.tag_BODY.rawValue)
             }
             
@@ -972,8 +1024,22 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             if name == nil {
                 name = "Unknown"
             }
-            name = name?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
-            peer.displayName = name!
+            name = name!.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines) // sender pads with spaces to 32 bytes
+            peer.displayName = self.sanitizeCharsToDNSChars(str: name!) // probably unnecessary but need to be safe
+            
+            // we're the server. If we are advertising and browsing for the same serviceType, there's a duplicate peer situation to take care of -- one created by browsing, one when socket was accepted. Remedy: kill old one, keep this one
+            for existingPeer in self.peers.filter({ $0.displayName == peer.displayName && $0 != peer }) {
+                if let indexOfPeer = self.peers.index(of: existingPeer) {
+                    DLog("BluepeerObject: removing dupe peer \(self.peers[indexOfPeer].displayName) from index \(indexOfPeer), had socket: \(self.peers[indexOfPeer].socket != nil ? "ACTIVE" : "nil")")
+                    self.peers.remove(at: indexOfPeer)
+                }
+                self.bailOn(socket: existingPeer.socket, peer: existingPeer)
+                peer.dnsService?.endResolve()
+                peer.dnsService = nil
+                peer.announced = false
+                peer.keepaliveTimer?.invalidate()
+                peer.keepaliveTimer = nil
+            }
             
             if let delegate = self.membershipAdminDelegate {
                 self.dispatch_on_delegate_queue({
@@ -981,19 +1047,18 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
                         if inviteAccepted && peer.state == .awaitingAuth && sock.isConnected == true {
                             peer.state = .connected // SERVER becomes connected
                             // CONVENTION: SERVER sends CLIENT a single 0 to show connection has been accepted, since it isn't possible to send a header for a payload of size zero except here.
-                            self.logDelegate?.didReadWrite("writeAcceptance")
+                            self.logDelegate?.didReadWrite("writeAuthAcceptance")
                             sock.write(Data.init(count: 1), withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_WRITING.rawValue)
                             DLog("... accepted (by my delegate)")
                             self.dispatch_on_delegate_queue({
                                 self.membershipRosterDelegate?.peerDidConnect?(.client, peer: peer)
                             })
-                            self.logDelegate?.didReadWrite("readHeaderTerminator3")
+                            self.logDelegate?.didReadWrite("readHeaderTerminator2")
+                            self.scheduleNextKeepaliveTimer(peer) // NEW in 1.1: if the two sides open up a connection but no one says anything, make sure it stays open
                             sock.readData(to: self.headerTerminator, withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_HEADER.rawValue)
                         } else {
-                            peer.state = .notConnected
-                            sock.synchronouslySetDelegate(nil)
-                            sock.disconnect()
-                            peer.socket = nil
+                            self.logDelegate?.didReadWrite("writeAuthRejection!")
+                            self.bailOn(socket: sock, peer: peer)
                             DLog("... rejected (by my delegate), or no longer connected")
                         }
                     })
@@ -1004,7 +1069,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             self.dispatch_on_delegate_queue({
                 self.dataDelegate?.didReceiveData(data, fromPeer: peer)
             })
-            self.logDelegate?.didReadWrite("readHeaderTerminator4")
+            self.logDelegate?.didReadWrite("readHeaderTerminator3-receiveData")
             sock.readData(to: self.headerTerminator, withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_HEADER.rawValue)
         }
     }
