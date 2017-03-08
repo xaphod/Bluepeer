@@ -358,6 +358,7 @@ func DLog(_ items: Any...) {
             return
         }
         self.publisher = HHServicePublisher.init(name: self.displayNameSanitized, type: self.serviceType, domain: "local.", txtData: txtdata as Data!, port: UInt(serverPort))
+        self.publisher?.mainDispatchQueue = socketQueue
         
         guard let publisher = self.publisher else {
             DLog("BluepeerObject: could not create publisher")
@@ -408,6 +409,7 @@ func DLog(_ items: Any...) {
         }
 
         self.browser = HHServiceBrowser.init(type: self.serviceType, domain: "local.")
+        self.browser?.mainDispatchQueue = socketQueue
         guard let browser = self.browser else {
             DLog("BluepeerObject: ERROR, could not create browser")
             return
@@ -637,7 +639,7 @@ extension BluepeerObject : HHServiceBrowserDelegate {
                 peer.displayName = service.name
                 peer.dnsService = service
                 self.peers.append(peer)
-                DLog("BluepeerObject didFind: created new peer \(peer.displayName). Peers.count after adding: \(self.peers.count)")
+                DLog("BluepeerObject didFind: created new peer \(peer.displayName). Peers(n=\(self.peers.count)) after adding: \(self.peers)")
             } else {
                 if (peer?.state == .notConnected) {
                     DLog("BluepeerObject didFind: found existing not-connected peer \(peer?.displayName), replacing with newer service")
@@ -782,8 +784,7 @@ extension BluepeerObject : HHServiceDelegate {
                 do {
                     // pick the address to connect to INSIDE the block, because more addresses may have been added between announcement and inviteBlock being executed
                     guard let hhaddresses = peer.dnsService?.resolvedAddressInfo, hhaddresses.count > 0, var chosenAddress = hhaddresses.filter({ $0.isCandidateAddress(bluetoothOnly: limitToBluetooth) }).first else {
-                        DLog("BluepeerObject inviteBlock: ERROR, no resolvedAddresses or candidates!?!")
-                        assert(false)
+                        DLog("BluepeerObject inviteBlock: no resolvedAddresses or candidates after invite accepted/rejected, BAILING")
                         return
                     }
                     
@@ -895,7 +896,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             newPeer.role = .client
             newPeer.socket = newSocket
             self.peers.append(newPeer) // always add as a new peer, even if it already exists. This might result in a dupe if we are browsing and advertising for same service. The original will get removed on receiving the name of other device, if it matches
-            DLog("BluepeerObject: accepting new connection from \(connectedHost). Peers.count after adding: \(self.peers.count)")
+            DLog("BluepeerObject: accepting new connection from \(connectedHost). Peers(n=\(self.peers.count)) after adding: \(self.peers)")
             
             // CONVENTION: CLIENT sends SERVER 32 bytes of its name -- UTF-8 string
             self.logDelegate?.didReadWrite("readName")
@@ -936,7 +937,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             return
         }
         let peer = self.peers[peerIndex]
-        DLog("BluepeerObject: \(peer.displayName) @ \(peer.socket?.connectedHost) disconnected. Peers.count: \(self.peers.count)")
+        DLog("BluepeerObject: \(peer.displayName) @ \(peer.socket?.connectedHost) disconnected. Peers(n=\(self.peers.count)): \(self.peers)")
         let oldState = peer.state
         peer.state = .notConnected
         peer.keepaliveTimer?.invalidate()
@@ -946,13 +947,13 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
         switch oldState {
         case .connected:
             self.peers.remove(at: peerIndex)
-            DLog("BluepeerObject: removed peer. New peers.count: \(self.peers.count)")
+            DLog("BluepeerObject: removed peer. Peers(n=\(self.peers.count)): \(self.peers)")
             self.dispatch_on_delegate_queue({
                 self.membershipRosterDelegate?.peerDidDisconnect?(peer.role, peer: peer)
             })
         case .notConnected:
             self.peers.remove(at: peerIndex)
-            DLog("BluepeerObject: removed peer. New peers.count: \(self.peers.count)")
+            DLog("BluepeerObject: removed peer. Peers(n=\(self.peers.count)): \(self.peers)")
             assert(false, "ERROR: state is being tracked wrong")
         case .connecting, .awaitingAuth:
             // don't remove peer in this case
