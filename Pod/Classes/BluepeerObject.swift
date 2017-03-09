@@ -78,7 +78,7 @@ let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2 // TODO: ARGH THIS IS A SHI
     open var lastReceivedData: Date = Date.init(timeIntervalSince1970: 0)
     open var connectBlock: (()->Void)?
     override open var description: String {
-        return "[name: " + displayName + ", state: " + state.description + ", role: " + role.description + ", socket: " + socket.debugDescription + ", dnsService: " + dnsService.debugDescription + ", lastReceivedData: " + lastReceivedData.description + ", keepAlive: " + keepaliveTimer.debugDescription + "]\n"
+        return "\n[name: " + displayName + ", state: " + state.description + ", role: " + role.description + ", socket: " + socket.debugDescription + ", dnsService: " + dnsService.debugDescription + ", lastReceivedData: " + lastReceivedData.description + ", keepAlive: " + keepaliveTimer.debugDescription + "]"
     }
 }
 
