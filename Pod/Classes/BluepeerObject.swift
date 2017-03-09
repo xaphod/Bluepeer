@@ -442,7 +442,7 @@ func DLog(_ items: Any...) {
         self.browsing = false
         for peer in self.peers {
             peer.dnsService?.endResolve()
-            peer.dnsService = nil
+//            peer.dnsService = nil
             peer.announced = false
         }
     }
@@ -634,7 +634,7 @@ extension BluepeerObject : HHServiceBrowserDelegate {
             DLog("BluepeerObject: didFindService \(service.name), moreComing: \(moreComing)")
             service.delegate = self
             
-            // if this peer eixsts, then add this as another address(es), otherwise add now
+            // if this peer exists, then add this as another address(es), otherwise add now
             var peer = self.peers.filter({ $0.displayName == service.name }).first
             
             if peer == nil {
@@ -728,7 +728,7 @@ extension BluepeerObject : HHServiceDelegate {
             }
         }
 
-        guard let peer = self.peers.filter({ $0.dnsService == service }).first else {
+        guard let peer = self.peers.filter({ $0.dnsService?.name == service.name }).first else {
             DLog("BluepeerObject: serviceDidResolve FAILED, should have found a peer")
             assert(false)
             return
@@ -1042,7 +1042,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
                 }
                 self.bailOn(socket: existingPeer.socket, peer: existingPeer)
                 peer.dnsService?.endResolve()
-                peer.dnsService = nil
+                peer.dnsService = nil // there's not really supposed to be a dnsService present here, this is paranoia
                 peer.announced = false
                 peer.keepaliveTimer?.invalidate()
                 peer.keepaliveTimer = nil
