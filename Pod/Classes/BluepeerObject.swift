@@ -68,7 +68,7 @@ public enum BPPeerState: Int, CustomStringConvertible {
 }
 
 @objc open class BPPeer: NSObject {
-    open var displayName: String = "" // is HHService.name !
+    open var displayName: String = "" // is same as HHService.name !
     fileprivate var socket: GCDAsyncSocket?
     open var role: RoleType = .unknown
     open var state: BPPeerState = .notConnected
@@ -77,9 +77,18 @@ public enum BPPeerState: Int, CustomStringConvertible {
     open var keepaliveTimer: Timer?
     open var lastReceivedData: Date = Date.init(timeIntervalSince1970: 0)
     open var connectBlock: (()->Void)?
-    open var customData: [String:String]?
+    open var customData: [String:AnyHashable]? // store your own data here. When a browser finds an advertiser and creates a peer for it, this will be filled out with the advertiser's customData *even before any connection occurs*. Note that while you can store values that are AnyHashable, only Strings are used as values for advertiser->browser connections.
+    var connectCount=0, disconnectCount=0, connectAttemptFailCount=0, connectAttemptFailAuthRejectCount=0, dataRecvCount=0, dataSendCount=0
     override open var description: String {
-        return "\n[name: " + displayName + ", state: " + state.description + ", role: " + role.description + ", socket: " + socket.debugDescription + ", lastService: " + lastService.debugDescription + ", lastReceivedData: " + lastReceivedData.description + ", keepAlive: " + keepaliveTimer.debugDescription + "]"
+        var socketDesc = "nil"
+        if let socket = self.socket {
+            if let host = socket.connectedHost {
+                socketDesc = host
+            } else {
+                socketDesc = "NOT connected"
+            }
+        }
+        return "\n[" + displayName + " is \(state) as \(role). C:\(connectCount) D:\(disconnectCount) cFail:\(connectAttemptFailCount) cFailAuth:\(connectAttemptFailAuthRejectCount), Data In#:\(dataRecvCount) InLast: \(lastReceivedData), Out#:\(dataSendCount). Socket: " + socketDesc + ", lastService: " + lastService.debugDescription + "]"
     }
 }
 
@@ -91,12 +100,12 @@ public enum BPPeerState: Int, CustomStringConvertible {
 
 @objc public protocol BluepeerMembershipAdminDelegate {
     @objc optional func peerConnectionRequest(_ peer: BPPeer, invitationHandler: @escaping (Bool) -> Void) // was named: sessionConnectionRequest
-    @objc optional func browserFoundPeer(_ role: RoleType, peer: BPPeer, customData: [String:String]?) // peer has connectBlock() that can be executed
+    @objc optional func browserFoundPeer(_ role: RoleType, peer: BPPeer) // peer has connectBlock() that can be executed, and your .customData too
     @objc optional func browserLostPeer(_ role: RoleType, peer: BPPeer)
 }
 
 @objc public protocol BluepeerDataDelegate {
-    func didReceiveData(_ data: Data, fromPeer peerID: BPPeer)
+    func didReceiveData(_ data: Data, fromPeer peer: BPPeer)
 }
 
 @objc public protocol BluepeerLoggingDelegate {
@@ -230,6 +239,14 @@ func DLog(_ items: Any...) {
         DLog("BluepeerObject: DEINIT FINISH")
     }
     
+    override open var description: String {
+        var retval = ""
+        for peer in self.peers {
+            retval += peer.description
+        }
+        return retval
+    }
+    
     // Note: if I disconnect, then my delegate is expected to reconnect if needed.
     func didEnterBackground() {
         self.appIsInBackground = true
@@ -327,7 +344,7 @@ func DLog(_ items: Any...) {
         return self.peers.filter({ $0.state == .authenticated }).count
     }
     
-    // specify customData if this is needed for browser to decide whether to connect or not
+    // specify customData if this is needed for browser to decide whether to connect or not. Each key and value should be less than 255 bytes, and the total should be less than 1300 bytes.
     open func startAdvertising(_ role: RoleType, customData: [String:String]?) {
         if let _ = self.advertising {
             DLog("BluepeerObject: Already advertising (no-op)")
@@ -388,6 +405,7 @@ func DLog(_ items: Any...) {
         }
         self.publisher = nil
         self.advertising = nil
+        self.advertisingCustomData = nil
         if let socket = self.serverSocket {
             socket.synchronouslySetDelegate(nil)
             socket.disconnect()
@@ -432,8 +450,6 @@ func DLog(_ items: Any...) {
         self.browsing = false
         for peer in self.peers {
             peer.lastService?.endResolve()
-//            peer.dnsService = nil
-//            peer.customData = nil
         }
     }
     
@@ -479,6 +495,7 @@ func DLog(_ items: Any...) {
         senddata.append(data)
         
 //        DLog("sendDataInternal writes: \((senddata as Data).hex), payload part: \(data.hex)")
+        peer.dataSendCount += 1
         peer.socket?.write(senddata as Data, withTimeout: Timeouts.body.rawValue, tag: DataTag.tag_WRITING.rawValue)
     }
     
@@ -489,6 +506,7 @@ func DLog(_ items: Any...) {
             }
 
             peer.lastReceivedData = Date.init()
+            peer.dataRecvCount += 1
 
             if peer.keepaliveTimer?.isValid == true {
                 return
@@ -574,7 +592,7 @@ func DLog(_ items: Any...) {
         if self.appIsInBackground == false {
             DLog("BluepeerObject announcePeer: announcing now with browserFoundPeer - call peer.connectBlock() to connect")
             self.dispatch_on_delegate_queue({
-                delegate.browserFoundPeer?(peer.role, peer: peer, customData: peer.customData)
+                delegate.browserFoundPeer?(peer.role, peer: peer)
             })
         } else {
             DLog("BluepeerObject announcePeer: app is in BACKGROUND, no-op!")
@@ -648,7 +666,6 @@ extension BluepeerObject : HHServiceBrowserDelegate {
                 peer.lastService?.delegate = nil
                 peer.lastService?.endResolve()
                 peer.lastService = service
-                //                peer?.customData = nil
                 DLog("BluepeerObject didFind: ...done")
             } else {
                 peer = BPPeer.init()
@@ -676,7 +693,6 @@ extension BluepeerObject : HHServiceBrowserDelegate {
         }
         for peer in matchingPeers {
             DLog("BluepeerObject: didRemoveService \(service.name)")
-            // peer.customData = nil
             self.dispatch_on_delegate_queue({
                 self.membershipAdminDelegate?.browserLostPeer?(peer.role, peer: peer)
             })
@@ -952,12 +968,17 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
         sock.synchronouslySetDelegate(nil)
         switch oldState {
         case .authenticated:
+            peer.disconnectCount += 1
             self.dispatch_on_delegate_queue({
                 self.membershipRosterDelegate?.peerDidDisconnect?(peer.role, peer: peer)
             })
         case .notConnected:
             assert(false, "ERROR: state is being tracked wrong")
         case .connecting, .awaitingAuth:
+            peer.connectAttemptFailCount += 1
+            if oldState == .awaitingAuth {
+                peer.connectAttemptFailAuthRejectCount += 1
+            }
             self.dispatch_on_delegate_queue({
                 self.membershipRosterDelegate?.peerConnectionAttemptFailed?(peer.role, peer: peer, isAuthRejection: oldState == .awaitingAuth)
             })
@@ -1012,6 +1033,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
                 return
             }
             peer.state = .authenticated // CLIENT becomes authenticated
+            peer.connectCount += 1
             self.dispatch_on_delegate_queue({
                 self.membershipRosterDelegate?.peerDidConnect?(peer.role, peer: peer)
             })
@@ -1064,12 +1086,19 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             if let delegate = self.membershipAdminDelegate {
                 self.dispatch_on_delegate_queue({
                     delegate.peerConnectionRequest?(peer, invitationHandler: { (inviteAccepted) in
-                        if inviteAccepted && peer.state == .awaitingAuth && sock.isConnected == true {
+                        if peer.state != .awaitingAuth || sock.isConnected != true {
+                            DLog("inviteHandlerBlock: not connected/wrong state, so cannot accept!")
+                            self.logDelegate?.didReadWrite("inviteHandlerBlock, not connected / wrong state!")
+                            if (sock.isConnected) {
+                                self.disconnectSocket(socket: sock, peer: peer)
+                            }
+                        } else if inviteAccepted {
                             peer.state = .authenticated // SERVER-local-peer becomes connected
+                            peer.connectCount += 1
                             // CONVENTION: SERVER sends CLIENT a single 0 to show connection has been accepted, since it isn't possible to send a header for a payload of size zero except here.
                             self.logDelegate?.didReadWrite("writeAuthAcceptance")
                             sock.write(Data.init(count: 1), withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_WRITING.rawValue)
-                            DLog("... accepted (by my delegate)")
+                            DLog("inviteHandlerBlock: accepted (by my delegate)")
                             self.dispatch_on_delegate_queue({
                                 self.membershipRosterDelegate?.peerDidConnect?(.client, peer: peer)
                             })
@@ -1077,9 +1106,9 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
                             self.scheduleNextKeepaliveTimer(peer) // NEW in 1.1: if the two sides open up a connection but no one says anything, make sure it stays open
                             sock.readData(to: self.headerTerminator, withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_HEADER.rawValue)
                         } else {
-                            self.logDelegate?.didReadWrite("writeAuthRejection!") // TODO: seen here when shouldn't be. Probably peer.state was something unexpected...?
+                            DLog("inviteHandlerBlock: rejected (by my delegate)")
+                            self.logDelegate?.didReadWrite("authRejection, disconnecting!")
                             self.disconnectSocket(socket: sock, peer: peer)
-                            DLog("... rejected (by my delegate), or no longer connected")
                         }
                     })
                 })
