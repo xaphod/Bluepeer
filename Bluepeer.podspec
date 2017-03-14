@@ -9,8 +9,8 @@
 
 Pod::Spec.new do |s|
   s.name             = "Bluepeer"
-  s.version          = "1.0.23"
-  s.summary          = "Provides P2P (adhoc) Bluetooth and wifi networking at high-level"
+  s.version          = "1.1.0"
+  s.summary          = "Provides adhoc Bluetooth and wifi networking at high-level"
   s.description      = <<-DESC
 			Provides P2P (adhoc) Bluetooth and wifi networking at high-level. Uses low-level frameworks like HHServices to have more control than Multipeer and NSNetService.
                        DESC

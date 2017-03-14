@@ -174,17 +174,17 @@ extension BluepeerBrowserViewController: BluepeerMembershipAdminDelegate {
         })
     }
     
-//    public func browserLostPeer(_ role: RoleType, peer: BPPeer) {
-//        DispatchQueue.main.async(execute: {
-//            self.progressView?.dismiss(withAnimation: false)
-//            self.progressView = nil
-//            self.lastTimerStarted = nil
-//            self.timer?.invalidate()
-//            self.timer = nil
-//            if let index = self.peers.index(where: {$0.0 == peer}) {
-//                self.peers.remove(at: index)
-//                self.tableView.reloadData()
-//            }
-//        })
-//    }
+    public func browserLostPeer(_ role: RoleType, peer: BPPeer) {
+        DispatchQueue.main.async(execute: {
+            self.progressView?.dismiss(withAnimation: false)
+            self.progressView = nil
+            self.lastTimerStarted = nil
+            self.timer?.invalidate()
+            self.timer = nil
+            if let index = self.peers.index(where: {$0.0 == peer}) {
+                self.peers.remove(at: index)
+                self.tableView.reloadData()
+            }
+        })
+    }
 }
