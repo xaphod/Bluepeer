@@ -137,7 +137,7 @@ import CoreBluetooth
                 targetPeers = toPeers
             } else {
                 let peersArray: [(MCPeerID, (role: RoleType, state: MCSessionState))] = peers.filter({
-                    if toRole != .all {
+                    if toRole != .any {
                         return $0.1.role == toRole && $0.1.state == .connected
                     } else {
                         return $0.1.state == .connected
