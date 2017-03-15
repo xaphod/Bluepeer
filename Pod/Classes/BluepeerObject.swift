@@ -338,7 +338,6 @@ func DLog(_ items: CustomStringConvertible...) {
             peer.state = .notConnected
             peer.keepaliveTimer?.invalidate()
             peer.keepaliveTimer = nil
-            peer.customData = nil
         }
         self.peers = [] // remove all peers!
     }
@@ -412,7 +411,6 @@ func DLog(_ items: CustomStringConvertible...) {
         }
         self.publisher = nil
         self.advertising = nil
-        self.advertisingCustomData = nil
         if let socket = self.serverSocket {
             socket.synchronouslySetDelegate(nil)
             socket.disconnect()
@@ -693,7 +691,15 @@ extension BluepeerObject : HHServiceBrowserDelegate {
             return
         }
         for peer in matchingPeers {
-            DLog("didRemoveService \(service.name)")
+            
+            // NEW: if found exact service, then nil it out to prevent more connection attempts
+            if peer.lastService == service {
+                DLog("didRemoveService \(service.name), REMOVING SERVICE, informing delegate")
+                peer.lastService = nil
+            } else {
+                DLog("didRemoveService \(service.name), no matching service (no-op), informing delegate")
+            }
+            
             self.dispatch_on_delegate_queue({
                 self.membershipAdminDelegate?.browserLostPeer?(peer.role, peer: peer)
             })
@@ -769,7 +775,7 @@ extension BluepeerObject : HHServiceDelegate {
         peer.lastService = service
         peer.role = role
         peer.customData = customData
-        DLog("serviceDidResolve for \(service.name) with addresses \(hhaddresses.count) - setting peer.role: \(role), peer.state: \(peer.state)")
+        DLog("serviceDidResolve for \(service.name)m addresses \(hhaddresses.count), peer.role: \(role), peer.state: \(peer.state), #customData:\(customData.count)")
         
         var limitToBluetooth = self.bluetoothOnly
         let candidates = hhaddresses.filter({ $0.isCandidateAddress(bluetoothOnly: limitToBluetooth) })
@@ -809,7 +815,7 @@ extension BluepeerObject : HHServiceDelegate {
             do {
                 // pick the address to connect to INSIDE the block, because more addresses may have been added between announcement and inviteBlock being executed
                 guard let hhaddresses = peer.lastService?.resolvedAddressInfo, hhaddresses.count > 0, var chosenAddress = hhaddresses.filter({ $0.isCandidateAddress(bluetoothOnly: limitToBluetooth) }).first else {
-                    DLog(" connectBlock: no resolvedAddresses or candidates after invite accepted/rejected, BAILING")
+                    DLog("connectBlock: \(peer.displayName) has no resolvedAddresses or candidates after invite accepted/rejected, BAILING")
                     return
                 }
                 
@@ -821,7 +827,7 @@ extension BluepeerObject : HHServiceDelegate {
                     }
                 }
                 
-                DLog(" connectBlock: \(peer.displayName) has \(hhaddresses.count) addresses, chose \(chosenAddress.addressAndPortString) on interface \(chosenAddress.interfaceName)")
+                DLog("connectBlock: \(peer.displayName) has \(hhaddresses.count) addresses, chose \(chosenAddress.addressAndPortString) on interface \(chosenAddress.interfaceName)")
                 let sockdata = chosenAddress.socketAsData()
                 
                 // TODO: when migrating Wifibooth, blueprint: make sure browserFoundPeer calls stopBrowsing()!
@@ -829,7 +835,7 @@ extension BluepeerObject : HHServiceDelegate {
                 //                    self.stopBrowsing() // stop browsing once user has done something. Destroys all HHService except this one!
                 
                 if let oldSocket = peer.socket {
-                    DLog("**** BluepeerObject connectBlock: PEER ALREADY HAD SOCKET, DESTROYING...")
+                    DLog("**** connectBlock: PEER ALREADY HAD SOCKET, DESTROYING...")
                     oldSocket.synchronouslySetDelegate(nil)
                     oldSocket.disconnect()
                     peer.socket = nil
@@ -838,7 +844,7 @@ extension BluepeerObject : HHServiceDelegate {
                 peer.socket = GCDAsyncSocket.init(delegate: self, delegateQueue: self.socketQueue)
                 peer.socket?.isIPv4PreferredOverIPv6 = false
                 peer.state = .connecting
-                try peer.socket?.connect(toAddress: sockdata, viaInterface: chosenAddress.interfaceName, withTimeout: 20.0)
+                try peer.socket?.connect(toAddress: sockdata, viaInterface: chosenAddress.interfaceName, withTimeout: 10.0)
             } catch {
                 DLog("could not connect, ERROR: \(error)")
                 peer.state = .notConnected
@@ -964,7 +970,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             return
         }
         let peer = matchingPeers.first!
-        DLog(" socketDidDisconnect: \(peer.displayName) @ \(peer.socket?.connectedHost) disconnected. Peers(n=\(self.peers.count)): \(self.peers)")
+        DLog(" socketDidDisconnect: \(peer.displayName) disconnected. Peers(n=\(self.peers.count)): \(self.peers)")
         let oldState = peer.state
         peer.state = .notConnected
         peer.keepaliveTimer?.invalidate()
@@ -984,13 +990,28 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             if oldState == .awaitingAuth {
                 peer.connectAttemptFailAuthRejectCount += 1
             }
+            
+            // TODO: DELETE or uncomment if we are not removing .lastService anymore in didRemove
+//            // if remote side crashed/was-killed, and has come back with a different name, and is already connected, and we hit the condition where didRemoveService never got called so this stale version of the Peer still has resolved addresses, then discover this and remove the stale beer
+//            if let hhaddresses = peer.lastService?.resolvedAddressInfo {
+//                for address in hhaddresses {
+//                    for authdPeer in self.peers.filter({ $0.state == .authenticated }) {
+//                        if let connectedIP = authdPeer.socket?.connectedHost, address.IP() == connectedIP {
+//                            self.disconnectSocket(socket: sock, peer: peer)
+//                            self.peers.remove(at: self.peers.index(of: peer)!)
+//                            DLog("\(peer.displayName) and \(authdPeer.displayName) were the same, removed \(peer.displayName)")
+//                        }
+//                    }
+//                }
+//            }
+            
             self.dispatch_on_delegate_queue({
                 self.membershipRosterDelegate?.peerConnectionAttemptFailed?(peer.role, peer: peer, isAuthRejection: oldState == .awaitingAuth)
             })
         }
 
         guard let lastService = peer.lastService, let hhaddresses = lastService.resolvedAddressInfo else {
-            DLog(" socketDidDisconnect: not reannouncing, since .lastService.resolvedAddressInfo is nil")
+            DLog("socketDidDisconnect: not reannouncing, since .lastService.resolvedAddressInfo is nil")
             return
         }
         
@@ -1076,7 +1097,12 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
                 if let indexOfPeer = self.peers.index(of: existingPeer) {
                     DLog("about to remove dupe peer \(self.peers[indexOfPeer].displayName) from index \(indexOfPeer), had socket: \(self.peers[indexOfPeer].socket != nil ? "ACTIVE" : "nil"). Peers(n=\(self.peers.count)) before removal:")
                     DLog(self.peers)
-                    
+                    peer.connectAttemptFailCount += existingPeer.connectAttemptFailCount
+                    peer.connectAttemptFailAuthRejectCount += existingPeer.connectAttemptFailAuthRejectCount
+                    peer.connectCount += existingPeer.connectCount
+                    peer.disconnectCount += existingPeer.disconnectCount
+                    peer.dataRecvCount += existingPeer.dataRecvCount
+                    peer.dataSendCount += existingPeer.dataSendCount
                     self.peers.remove(at: indexOfPeer)
                 }
                 self.disconnectSocket(socket: existingPeer.socket, peer: existingPeer)
