@@ -196,7 +196,7 @@ func DLog(_ items: CustomStringConvertible...) {
     enum Timeouts: Double {
         case header = 40
         case body = 90
-        case keepAlive = 30
+        case keepAlive = 16
     }
     
     // if queue isn't given, main queue is used
@@ -661,18 +661,21 @@ extension BluepeerObject : HHServiceBrowserDelegate {
             var peer = self.peers.filter({ $0.displayName == service.name }).first
             
             if let peer = peer {
-                DLog(" didFind: found existing peer \(peer.displayName), replacing with newer service!!!")
-                peer.lastService?.delegate = nil
-                peer.lastService?.endResolve()
+                if let _ = peer.lastService {
+                    DLog("didFind: peer \(peer.displayName) had service already, replacing with newer service!!!")
+                    peer.lastService?.delegate = nil
+                    peer.lastService?.endResolve()
+                } else {
+                    DLog("didFind: peer \(peer.displayName) had nil service, assigning this one")
+                }
                 peer.lastService = service
-                DLog(" didFind: ...done")
             } else {
                 peer = BPPeer.init()
                 guard let peer = peer else { return }
                 peer.displayName = service.name
                 peer.lastService = service
                 self.peers.append(peer)
-                DLog(" didFind: created new peer \(peer.displayName). Peers(n=\(self.peers.count)) after adding: \(self.peers)")
+                DLog("didFind: created new peer \(peer.displayName). Peers(n=\(self.peers.count)) after adding")
             }
             
             let prots = UInt32(kDNSServiceProtocol_IPv4) | UInt32(kDNSServiceProtocol_IPv6)
@@ -685,24 +688,22 @@ extension BluepeerObject : HHServiceBrowserDelegate {
     }
     
     public func serviceBrowser(_ serviceBrowser: HHServiceBrowser, didRemove service: HHService, moreComing: Bool) {
-        let matchingPeers = self.peers.filter({ $0.lastService?.name == service.name })
+        let matchingPeers = self.peers.filter({ $0.displayName == service.name })
         if matchingPeers.count == 0 {
             DLog("didRemoveService for service.name \(service.name) -- IGNORING because no peer found")
             return
         }
         for peer in matchingPeers {
-            
             // NEW: if found exact service, then nil it out to prevent more connection attempts
             if peer.lastService == service {
-                DLog("didRemoveService \(service.name), REMOVING SERVICE, informing delegate")
+                DLog("didRemoveService \(peer.displayName), REMOVING SERVICE, informing delegate")
                 peer.lastService = nil
+                self.dispatch_on_delegate_queue({
+                    self.membershipAdminDelegate?.browserLostPeer?(peer.role, peer: peer)
+                })
             } else {
-                DLog("didRemoveService \(service.name), no matching service (no-op), informing delegate")
+                DLog("didRemoveService \(peer.displayName) has no matching service (no-op)")
             }
-            
-            self.dispatch_on_delegate_queue({
-                self.membershipAdminDelegate?.browserLostPeer?(peer.role, peer: peer)
-            })
         }
     }
 }
@@ -929,8 +930,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             newPeer.role = .client
             newPeer.socket = newSocket
             self.peers.append(newPeer) // always add as a new peer, even if it already exists. This might result in a dupe if we are browsing and advertising for same service. The original will get removed on receiving the name of other device, if it matches
-            DLog("accepting new connection from \(connectedHost). Peers(n=\(self.peers.count)) after adding:")
-            DLog(self.peers)
+            DLog("accepting new connection from \(connectedHost). Peers(n=\(self.peers.count)) after adding")
             
             // CONVENTION: CLIENT sends SERVER 32 bytes of its name -- UTF-8 string
             newSocket.readData(toLength: 32, withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_NAME.rawValue)
@@ -970,7 +970,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             return
         }
         let peer = matchingPeers.first!
-        DLog(" socketDidDisconnect: \(peer.displayName) disconnected. Peers(n=\(self.peers.count)): \(self.peers)")
+        DLog(" socketDidDisconnect: \(peer.displayName) disconnected. Peers(n=\(self.peers.count))")
         let oldState = peer.state
         peer.state = .notConnected
         peer.keepaliveTimer?.invalidate()
@@ -1095,8 +1095,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             // we're the server. If we are advertising and browsing for the same serviceType, there might be a duplicate peer situation to take care of -- one created by browsing, one when socket was accepted. Remedy: kill old one, keep this one
             for existingPeer in self.peers.filter({ $0.displayName == peer.displayName && $0 != peer }) {
                 if let indexOfPeer = self.peers.index(of: existingPeer) {
-                    DLog("about to remove dupe peer \(self.peers[indexOfPeer].displayName) from index \(indexOfPeer), had socket: \(self.peers[indexOfPeer].socket != nil ? "ACTIVE" : "nil"). Peers(n=\(self.peers.count)) before removal:")
-                    DLog(self.peers)
+                    DLog("about to remove dupe peer \(self.peers[indexOfPeer].displayName) from index \(indexOfPeer), had socket: \(self.peers[indexOfPeer].socket != nil ? "ACTIVE" : "nil"). Peers(n=\(self.peers.count)) before removal")
                     peer.connectAttemptFailCount += existingPeer.connectAttemptFailCount
                     peer.connectAttemptFailAuthRejectCount += existingPeer.connectAttemptFailAuthRejectCount
                     peer.connectCount += existingPeer.connectCount
