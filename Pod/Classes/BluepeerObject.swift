@@ -74,7 +74,21 @@ public enum BPPeerState: Int, CustomStringConvertible {
     fileprivate var socket: GCDAsyncSocket?
     open var role: RoleType = .unknown
     open var state: BPPeerState = .notConnected
-    fileprivate var lastService: HHService?
+    fileprivate var services = [HHService]()
+    fileprivate func resolvedServices() -> [HHService] {
+        return services.filter { $0.resolved == true }
+    }
+    fileprivate func pickedResolvedService() -> HHService? {
+        // this function determines which of the resolved services is used
+        return resolvedServices().last
+    }
+    fileprivate func destroyServices() {
+        for service in services {
+            service.delegate = nil
+            service.endResolve()
+        }
+        services = [HHService]()
+    }
     fileprivate var lastReannounce = Date.init(timeIntervalSince1970: 0)
     open var keepaliveTimer: Timer?
     open var lastReceivedData: Date = Date.init(timeIntervalSince1970: 0)
@@ -90,7 +104,7 @@ public enum BPPeerState: Int, CustomStringConvertible {
                 socketDesc = "NOT connected"
             }
         }
-        return "\n[" + displayName + " is \(state) as \(role). C:\(connectCount) D:\(disconnectCount) cFail:\(connectAttemptFailCount) cFailAuth:\(connectAttemptFailAuthRejectCount), Data In#:\(dataRecvCount) InLast: \(lastReceivedData), Out#:\(dataSendCount). Socket: " + socketDesc + ", lastService: " + lastService.debugDescription + "]"
+        return "\n[" + displayName + " is \(state) as \(role). C:\(connectCount) D:\(disconnectCount) cFail:\(connectAttemptFailCount) cFailAuth:\(connectAttemptFailAuthRejectCount), Data In#:\(dataRecvCount) InLast: \(lastReceivedData), Out#:\(dataSendCount). Socket: " + socketDesc + ", services#: \(services.count) (\(resolvedServices().count) resolved)]"
     }
 }
 
@@ -166,6 +180,7 @@ func DLog(_ items: CustomStringConvertible...) {
     var versionString: String = "unknown"
     var displayNameSanitized: String = ""
     var appIsInBackground = false
+    open var persistentConnectionMode = false // set to true if you have peers that should stay connected indefinitely and you intend to leave advertising & browsing always on
     
     weak open var membershipAdminDelegate: BluepeerMembershipAdminDelegate?
     weak open var membershipRosterDelegate: BluepeerMembershipRosterDelegate?
@@ -184,6 +199,7 @@ func DLog(_ items: CustomStringConvertible...) {
     let keepAliveHeader: Data = "0 ! 0 ! 0 ! 0 ! 0 ! 0 ! 0 ! ".data(using: String.Encoding.utf8)! // A special header kept to avoid timeouts
     let socketQueue = DispatchQueue(label: "xaphod.bluepeer.socketQueue", attributes: [])
     var browsingWorkaroundRestarts = 0
+    var lastCycle = Date.init(timeIntervalSince1970: 0)
     
     enum DataTag: Int {
         case tag_HEADER = 1
@@ -200,7 +216,7 @@ func DLog(_ items: CustomStringConvertible...) {
     }
     
     // if queue isn't given, main queue is used
-    public init?(serviceType: String, displayName:String?, queue:DispatchQueue?, serverPort: UInt16, overBluetoothOnly:Bool, bluetoothBlock: ((_ bluetoothState: BluetoothState)->Void)?) {
+    public init?(serviceType: String, displayName:String?, queue:DispatchQueue?, serverPort: UInt16, overBluetoothOnly: Bool, bluetoothBlock: ((_ bluetoothState: BluetoothState)->Void)?) {
         
         super.init()
         
@@ -247,7 +263,11 @@ func DLog(_ items: CustomStringConvertible...) {
     }
     
     override open var description: String {
-        var retval = ""
+        let formatter = DateFormatter.init()
+        formatter.dateStyle = .none
+        formatter.timeStyle = .medium
+        let cycleStr = self.lastCycle.timeIntervalSince1970 == 0 ? "None" : formatter.string(from: self.lastCycle)
+        var retval = "Last cycle: \(cycleStr)\n\n"
         for peer in self.peers {
             retval += peer.description + "\n"
         }
@@ -333,8 +353,7 @@ func DLog(_ items: CustomStringConvertible...) {
             peer.socket?.synchronouslySetDelegate(nil) // we don't want to run our disconnection logic below
             peer.socket?.disconnect()
             peer.socket = nil
-            peer.lastService?.endResolve()
-            peer.lastService = nil
+            peer.destroyServices()
             peer.state = .notConnected
             peer.keepaliveTimer?.invalidate()
             peer.keepaliveTimer = nil
@@ -391,13 +410,16 @@ func DLog(_ items: CustomStringConvertible...) {
         }
         if !starting {
             DLog(" ERROR: could not start advertising")
+            assert(false, "ERROR could not start advertising")
             self.publisher = nil
+            self.advertising = nil
+            return
         }
         // serverSocket is created in didPublish delegate (from HHServicePublisherDelegate) below
         self.advertising = role
     }
     
-    open func stopAdvertising() {
+    open func stopAdvertising(leaveServerSocketAlone: Bool = false) {
         if let _ = self.advertising {
             guard let publisher = self.publisher else {
                 DLog("publisher is MIA while advertising set true! ERROR. Setting advertising=false")
@@ -411,11 +433,13 @@ func DLog(_ items: CustomStringConvertible...) {
         }
         self.publisher = nil
         self.advertising = nil
-        if let socket = self.serverSocket {
-            socket.synchronouslySetDelegate(nil)
-            socket.disconnect()
-            self.serverSocket = nil
-            DLog("destroyed serverSocket")
+        if leaveServerSocketAlone == false {
+            if let socket = self.serverSocket {
+                socket.synchronouslySetDelegate(nil)
+                socket.disconnect()
+                self.serverSocket = nil
+                DLog("destroyed serverSocket")
+            }
         }
     }
     
@@ -454,7 +478,7 @@ func DLog(_ items: CustomStringConvertible...) {
         self.browser = nil
         self.browsing = false
         for peer in self.peers {
-            peer.lastService?.endResolve()
+            peer.destroyServices()
         }
     }
     
@@ -597,6 +621,65 @@ func DLog(_ items: CustomStringConvertible...) {
             DLog("announcePeer: app is in BACKGROUND, no-op!")
         }
     }
+    
+    private var floodProtect = false
+    fileprivate func cycleAdvertisingAndBrowsingCheck() {
+        if self.persistentConnectionMode == false || floodProtect == true {
+            return
+        }
+        let maxWindow = 20.0
+        if abs(self.lastCycle.timeIntervalSinceNow) < maxWindow {
+            floodProtect = true
+            DLog("%%% cycled within 20sec, calling again in \(maxWindow - self.lastCycle.timeIntervalSinceNow)sec... %%%")
+            self.socketQueue.asyncAfter(deadline: .now() + (maxWindow - self.lastCycle.timeIntervalSinceNow), execute: {
+                self.floodProtect = false
+                self.cycleAdvertisingAndBrowsingCheck()
+            })
+            return
+        }
+        let delaySec = 8.0 + (0.01*Double(arc4random_uniform(500))) // if too short, cycles too quickly and nothing gets found
+        
+        func cycleCausedByPeer() -> Bool {
+            for peer in self.peers {
+                if (peer.socket == nil || peer.socket?.isConnected == false) && (peer.services.count == 0) {
+                    DLog("%%% \(peer.displayName) ELIGIBLE TO CAUSE CYCLE %%%")
+                    return true
+                }
+            }
+            return false
+        }
+        
+//        func cycleCausedByGlobalConditions() -> Bool {
+//            if self.peers.filter({ $0.state == .authenticated }).count == 0 && self.peers.reduce(0, {$0 + $1.connectCount}) > 0 { // not connected and was ever connected
+//                DLog("%%% GLOBAL CONDITIONS FOR CYCLE DETECTED %%%")
+//                return true
+//            }
+//            return false
+//        }
+        
+        func doCycleNow() {
+            DLog("%%% DOING CYCLE NOW %%%")
+            self.lastCycle = Date.init()
+            let role = self.advertising
+            let customData = self.advertisingCustomData
+            self.stopBrowsing()
+            self.stopAdvertising(leaveServerSocketAlone: true)
+            self.startAdvertising(role!, customData: self.advertisingCustomData)
+            self.startBrowsing()
+        }
+        
+        if cycleCausedByPeer() { // || cycleCausedByGlobalConditions() {
+            DLog("%%% Will do a browse/advertise cycle in \(delaySec)sec if still eligible %%%")
+            self.socketQueue.asyncAfter(deadline: .now() + delaySec, execute: {
+                if cycleCausedByPeer() { // || cycleCausedByGlobalConditions() {
+                    doCycleNow()
+                    self.socketQueue.asyncAfter(deadline: .now() + maxWindow + 0.1, execute: { self.cycleAdvertisingAndBrowsingCheck() })
+                } else {
+                    DLog("%%% Cycle AVERTED %%%")
+                }
+            })
+        }
+    }
 }
 
 extension GCDAsyncSocket {
@@ -615,23 +698,21 @@ extension BluepeerObject : HHServicePublisherDelegate {
     public func serviceDidPublish(_ servicePublisher: HHServicePublisher) {
         // create serverSocket
         if let socket = self.serverSocket {
-            socket.synchronouslySetDelegate(nil)
-            socket.disconnect()
-            self.serverSocket = nil
-        }
-        
-        self.serverSocket = GCDAsyncSocket.init(delegate: self, delegateQueue: socketQueue)
-        self.serverSocket?.isIPv4PreferredOverIPv6 = false
-        guard let serverSocket = self.serverSocket else {
-            DLog("ERROR - Could not create serverSocket")
-            return
-        }
-        
-        do {
-            try serverSocket.accept(onPort: serverPort)
-        } catch {
-            DLog("ERROR accepting on serverSocket")
-            return
+            DLog("serviceDidPublish: USING EXISTING SERVERSOCKET \(socket)")
+        } else {
+            self.serverSocket = GCDAsyncSocket.init(delegate: self, delegateQueue: socketQueue)
+            self.serverSocket?.isIPv4PreferredOverIPv6 = false
+            guard let serverSocket = self.serverSocket else {
+                DLog("ERROR - Could not create serverSocket")
+                return
+            }
+            
+            do {
+                try serverSocket.accept(onPort: serverPort)
+            } catch {
+                DLog("ERROR accepting on serverSocket")
+                return
+            }
         }
         
         DLog("now advertising for service \(serviceType)")
@@ -661,19 +742,13 @@ extension BluepeerObject : HHServiceBrowserDelegate {
             var peer = self.peers.filter({ $0.displayName == service.name }).first
             
             if let peer = peer {
-                if let _ = peer.lastService {
-                    DLog("didFind: peer \(peer.displayName) had service already, replacing with newer service!!!")
-                    peer.lastService?.delegate = nil
-                    peer.lastService?.endResolve()
-                } else {
-                    DLog("didFind: peer \(peer.displayName) had nil service, assigning this one")
-                }
-                peer.lastService = service
+                DLog("didFind: added new unresolved service to peer \(peer.displayName)")
+                peer.services.append(service)
             } else {
                 peer = BPPeer.init()
                 guard let peer = peer else { return }
                 peer.displayName = service.name
-                peer.lastService = service
+                peer.services.append(service)
                 self.peers.append(peer)
                 DLog("didFind: created new peer \(peer.displayName). Peers(n=\(self.peers.count)) after adding")
             }
@@ -694,15 +769,21 @@ extension BluepeerObject : HHServiceBrowserDelegate {
             return
         }
         for peer in matchingPeers {
-            // NEW: if found exact service, then nil it out to prevent more connection attempts
-            if peer.lastService == service {
-                DLog("didRemoveService \(peer.displayName), REMOVING SERVICE, informing delegate")
-                peer.lastService = nil
-                self.dispatch_on_delegate_queue({
-                    self.membershipAdminDelegate?.browserLostPeer?(peer.role, peer: peer)
-                })
+            // if found exact service, then nil it out to prevent more connection attempts
+            if let serviceIndex = peer.services.index(of: service) {
+                let previousResolvedServiceCount = peer.resolvedServices().count
+                DLog("didRemoveService - REMOVING SERVICE from \(peer.displayName)")
+                peer.services.remove(at: serviceIndex)
+                
+                if peer.resolvedServices().count == 0 && previousResolvedServiceCount > 0 {
+                    DLog("didRemoveService - that was the LAST resolved service so calling browserLostPeer for \(peer.displayName)")
+                    self.dispatch_on_delegate_queue({
+                        self.membershipAdminDelegate?.browserLostPeer?(peer.role, peer: peer)
+                    })
+                }
+                self.cycleAdvertisingAndBrowsingCheck()
             } else {
-                DLog("didRemoveService \(peer.displayName) has no matching service (no-op)")
+                DLog("didRemoveService - \(peer.displayName) has no matching service (no-op)")
             }
         }
     }
@@ -739,9 +820,6 @@ extension BluepeerObject : HHServiceDelegate {
         case .unknown:
             assert(false, "Expecting a role that isn't unknown here")
             return
-        case .any:
-            role = .server // something advertising as .any (flexible) is considered a Server
-            break
         default:
             break
         }
@@ -770,13 +848,9 @@ extension BluepeerObject : HHServiceDelegate {
             return
         }
         let peer = matchingPeers.first!
-        if let existingSvc = peer.lastService {
-            existingSvc.endResolve()
-        }
-        peer.lastService = service
         peer.role = role
         peer.customData = customData
-        DLog("serviceDidResolve for \(service.name)m addresses \(hhaddresses.count), peer.role: \(role), peer.state: \(peer.state), #customData:\(customData.count)")
+        DLog("serviceDidResolve for \(peer.displayName) - addresses \(hhaddresses.count), peer.role: \(role), peer.state: \(peer.state), #customData:\(customData.count)")
         
         var limitToBluetooth = self.bluetoothOnly
         let candidates = hhaddresses.filter({ $0.isCandidateAddress(bluetoothOnly: limitToBluetooth) })
@@ -815,7 +889,7 @@ extension BluepeerObject : HHServiceDelegate {
         peer.connectBlock = {
             do {
                 // pick the address to connect to INSIDE the block, because more addresses may have been added between announcement and inviteBlock being executed
-                guard let hhaddresses = peer.lastService?.resolvedAddressInfo, hhaddresses.count > 0, var chosenAddress = hhaddresses.filter({ $0.isCandidateAddress(bluetoothOnly: limitToBluetooth) }).first else {
+                guard let hhaddresses = peer.pickedResolvedService()?.resolvedAddressInfo, hhaddresses.count > 0, var chosenAddress = hhaddresses.filter({ $0.isCandidateAddress(bluetoothOnly: limitToBluetooth) }).first else {
                     DLog("connectBlock: \(peer.displayName) has no resolvedAddresses or candidates after invite accepted/rejected, BAILING")
                     return
                 }
@@ -828,7 +902,7 @@ extension BluepeerObject : HHServiceDelegate {
                     }
                 }
                 
-                DLog("connectBlock: \(peer.displayName) has \(hhaddresses.count) addresses, chose \(chosenAddress.addressAndPortString) on interface \(chosenAddress.interfaceName)")
+                DLog("connectBlock: \(peer.displayName) has \(peer.services.count) svcs (\(peer.resolvedServices().count) resolved); picked service has \(hhaddresses.count) addresses, chose \(chosenAddress.addressAndPortString) on interface \(chosenAddress.interfaceName)")
                 let sockdata = chosenAddress.socketAsData()
                 
                 // TODO: when migrating Wifibooth, blueprint: make sure browserFoundPeer calls stopBrowsing()!
@@ -856,7 +930,7 @@ extension BluepeerObject : HHServiceDelegate {
     }
     
     public func serviceDidNotResolve(_ service: HHService) {
-        DLog("ERROR, service did not resolve: \(service.name)")
+        DLog("****** ERROR, service did not resolve: \(service.name) *******")
     }
 }
 
@@ -991,32 +1065,20 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
                 peer.connectAttemptFailAuthRejectCount += 1
             }
             
-            // TODO: DELETE or uncomment if we are not removing .lastService anymore in didRemove
-//            // if remote side crashed/was-killed, and has come back with a different name, and is already connected, and we hit the condition where didRemoveService never got called so this stale version of the Peer still has resolved addresses, then discover this and remove the stale beer
-//            if let hhaddresses = peer.lastService?.resolvedAddressInfo {
-//                for address in hhaddresses {
-//                    for authdPeer in self.peers.filter({ $0.state == .authenticated }) {
-//                        if let connectedIP = authdPeer.socket?.connectedHost, address.IP() == connectedIP {
-//                            self.disconnectSocket(socket: sock, peer: peer)
-//                            self.peers.remove(at: self.peers.index(of: peer)!)
-//                            DLog("\(peer.displayName) and \(authdPeer.displayName) were the same, removed \(peer.displayName)")
-//                        }
-//                    }
-//                }
-//            }
-            
             self.dispatch_on_delegate_queue({
                 self.membershipRosterDelegate?.peerConnectionAttemptFailed?(peer.role, peer: peer, isAuthRejection: oldState == .awaitingAuth)
             })
         }
 
-        guard let lastService = peer.lastService, let hhaddresses = lastService.resolvedAddressInfo else {
-            DLog("socketDidDisconnect: not reannouncing, since .lastService.resolvedAddressInfo is nil")
+        self.cycleAdvertisingAndBrowsingCheck()
+
+        guard let lastService = peer.pickedResolvedService(), let hhaddresses = lastService.resolvedAddressInfo else {
+            DLog("socketDidDisconnect: not reannouncing, since last resolved service's resolvedAddressInfo is nil")
             return
         }
         
         if hhaddresses.count > 0 {
-            if abs(peer.lastReannounce.timeIntervalSinceNow) > 5.0 {
+            if abs(peer.lastReannounce.timeIntervalSinceNow) > 2.0 {
                 peer.lastReannounce = Date.init()
                 DLog("\(peer.displayName) socketDidDisconnect: re-announcing now")
                 self.announcePeer(peer: peer)
@@ -1036,14 +1098,12 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
     }
     
     public func socket(_ sock: GCDAsyncSocket, didRead data: Data, withTag tag: Int) {
-        
-//        DLog("socket reads: \(data.hex)")
-        
         guard let peer = sock.peer else {
             DLog("WARNING, did not find peer in didReadData, doing nothing")
             return
         }
         self.scheduleNextKeepaliveTimer(peer)
+        self.cycleAdvertisingAndBrowsingCheck()
 
         if tag == DataTag.tag_AUTH.rawValue {
             if data.count != 1 {
@@ -1094,21 +1154,20 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             
             // we're the server. If we are advertising and browsing for the same serviceType, there might be a duplicate peer situation to take care of -- one created by browsing, one when socket was accepted. Remedy: kill old one, keep this one
             for existingPeer in self.peers.filter({ $0.displayName == peer.displayName && $0 != peer }) {
-                if let indexOfPeer = self.peers.index(of: existingPeer) {
-                    DLog("about to remove dupe peer \(self.peers[indexOfPeer].displayName) from index \(indexOfPeer), had socket: \(self.peers[indexOfPeer].socket != nil ? "ACTIVE" : "nil"). Peers(n=\(self.peers.count)) before removal")
-                    peer.connectAttemptFailCount += existingPeer.connectAttemptFailCount
-                    peer.connectAttemptFailAuthRejectCount += existingPeer.connectAttemptFailAuthRejectCount
-                    peer.connectCount += existingPeer.connectCount
-                    peer.disconnectCount += existingPeer.disconnectCount
-                    peer.dataRecvCount += existingPeer.dataRecvCount
-                    peer.dataSendCount += existingPeer.dataSendCount
-                    self.peers.remove(at: indexOfPeer)
-                }
+                let indexOfPeer = self.peers.index(of: existingPeer)!
+                DLog("about to remove dupe peer \(existingPeer.displayName) from index \(indexOfPeer), had socket: \(existingPeer.socket != nil ? "ACTIVE" : "nil"). Peers(n=\(self.peers.count)) before removal")
+                peer.connectAttemptFailCount += existingPeer.connectAttemptFailCount
+                peer.connectAttemptFailAuthRejectCount += existingPeer.connectAttemptFailAuthRejectCount
+                peer.connectCount += existingPeer.connectCount
+                peer.disconnectCount += existingPeer.disconnectCount
+                peer.dataRecvCount += existingPeer.dataRecvCount
+                peer.dataSendCount += existingPeer.dataSendCount
+//                existingPeer.destroyServices()
+                peer.services.append(contentsOf: existingPeer.services)
+                existingPeer.keepaliveTimer?.invalidate()
+                existingPeer.keepaliveTimer = nil
                 self.disconnectSocket(socket: existingPeer.socket, peer: existingPeer)
-                peer.lastService?.endResolve()
-                peer.lastService = nil // there's not really supposed to be a dnsService present here, this is paranoia
-                peer.keepaliveTimer?.invalidate()
-                peer.keepaliveTimer = nil
+                self.peers.remove(at: indexOfPeer)
             }
             
             if let delegate = self.membershipAdminDelegate {
