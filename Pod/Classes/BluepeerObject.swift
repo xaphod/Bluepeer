@@ -89,10 +89,9 @@ public enum BPPeerState: Int, CustomStringConvertible {
         }
         services = [HHService]()
     }
-    fileprivate var lastReannounce = Date.init(timeIntervalSince1970: 0)
     open var keepaliveTimer: Timer?
     open var lastReceivedData: Date = Date.init(timeIntervalSince1970: 0)
-    open var connectBlock: (()->Void)?
+    open var connect: (()->Void)?
     open var customData: [String:AnyHashable]? // store your own data here. When a browser finds an advertiser and creates a peer for it, this will be filled out with the advertiser's customData *even before any connection occurs*. Note that while you can store values that are AnyHashable, only Strings are used as values for advertiser->browser connections.
     var connectCount=0, disconnectCount=0, connectAttemptFailCount=0, connectAttemptFailAuthRejectCount=0, dataRecvCount=0, dataSendCount=0
     override open var description: String {
@@ -110,13 +109,13 @@ public enum BPPeerState: Int, CustomStringConvertible {
 
 @objc public protocol BluepeerMembershipRosterDelegate {
     @objc optional func peerDidConnect(_ peerRole: RoleType, peer: BPPeer)
-    @objc optional func peerDidDisconnect(_ peerRole: RoleType, peer: BPPeer)
+    @objc optional func peerDidDisconnect(_ peerRole: RoleType, peer: BPPeer, canConnectNow: Bool) // canConnectNow: true if this peer is still announce-able, ie. can now call connect() on it
     @objc optional func peerConnectionAttemptFailed(_ peerRole: RoleType, peer: BPPeer?, isAuthRejection: Bool)
 }
 
 @objc public protocol BluepeerMembershipAdminDelegate {
     @objc optional func peerConnectionRequest(_ peer: BPPeer, invitationHandler: @escaping (Bool) -> Void) // was named: sessionConnectionRequest
-    @objc optional func browserFoundPeer(_ role: RoleType, peer: BPPeer) // peer has connectBlock() that can be executed, and your .customData too
+    @objc optional func browserFoundPeer(_ role: RoleType, peer: BPPeer) // peer has connect() that can be executed, and your .customData too
     @objc optional func browserLostPeer(_ role: RoleType, peer: BPPeer)
 }
 
@@ -180,7 +179,6 @@ func DLog(_ items: CustomStringConvertible...) {
     var versionString: String = "unknown"
     var displayNameSanitized: String = ""
     var appIsInBackground = false
-    open var persistentConnectionMode = false // set to true if you have peers that should stay connected indefinitely and you intend to leave advertising & browsing always on
     
     weak open var membershipAdminDelegate: BluepeerMembershipAdminDelegate?
     weak open var membershipRosterDelegate: BluepeerMembershipRosterDelegate?
@@ -611,7 +609,7 @@ func DLog(_ items: CustomStringConvertible...) {
         }
 
         if self.appIsInBackground == false {
-            DLog("announcePeer: announcing now with browserFoundPeer - call peer.connectBlock() to connect")
+            DLog("announcePeer: announcing now with browserFoundPeer - call peer.connect() to connect")
             self.dispatch_on_delegate_queue({
                 delegate.browserFoundPeer?(peer.role, peer: peer)
             })
@@ -824,11 +822,11 @@ extension BluepeerObject : HHServiceDelegate {
             }
         }
 
-        peer.connectBlock = {
+        peer.connect = {
             do {
                 // pick the address to connect to INSIDE the block, because more addresses may have been added between announcement and inviteBlock being executed
                 guard let hhaddresses = peer.pickedResolvedService()?.resolvedAddressInfo, hhaddresses.count > 0, var chosenAddress = hhaddresses.filter({ $0.isCandidateAddress(bluetoothOnly: limitToBluetooth) }).first else {
-                    DLog("connectBlock: \(peer.displayName) has no resolvedAddresses or candidates after invite accepted/rejected, BAILING")
+                    DLog("connect: \(peer.displayName) has no resolvedAddresses or candidates after invite accepted/rejected, BAILING")
                     return
                 }
                 
@@ -840,7 +838,7 @@ extension BluepeerObject : HHServiceDelegate {
                     }
                 }
                 
-                DLog("connectBlock: \(peer.displayName) has \(peer.services.count) svcs (\(peer.resolvedServices().count) resolved); picked service has \(hhaddresses.count) addresses, chose \(chosenAddress.addressAndPortString) on interface \(chosenAddress.interfaceName)")
+                DLog("connect: \(peer.displayName) has \(peer.services.count) svcs (\(peer.resolvedServices().count) resolved); picked service has \(hhaddresses.count) addresses, chose \(chosenAddress.addressAndPortString) on interface \(chosenAddress.interfaceName)")
                 let sockdata = chosenAddress.socketAsData()
                 
                 // TODO: when migrating Wifibooth, blueprint: make sure browserFoundPeer calls stopBrowsing()!
@@ -848,7 +846,7 @@ extension BluepeerObject : HHServiceDelegate {
                 //                    self.stopBrowsing() // stop browsing once user has done something. Destroys all HHService except this one!
                 
                 if let oldSocket = peer.socket {
-                    DLog("**** connectBlock: PEER ALREADY HAD SOCKET, DESTROYING...")
+                    DLog("**** connect: PEER ALREADY HAD SOCKET, DESTROYING...")
                     oldSocket.synchronouslySetDelegate(nil)
                     oldSocket.disconnect()
                     peer.socket = nil
@@ -990,11 +988,20 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
         peer.keepaliveTimer = nil
         peer.socket = nil
         sock.synchronouslySetDelegate(nil)
+        
+        // is it still valid to call connect() on this peer?
+        var canConnectNow = false
+        if let lastService = peer.pickedResolvedService(),
+            let hhaddresses = lastService.resolvedAddressInfo,
+            hhaddresses.count > 0 {
+            canConnectNow = true
+        }
+        
         switch oldState {
         case .authenticated:
             peer.disconnectCount += 1
             self.dispatch_on_delegate_queue({
-                self.membershipRosterDelegate?.peerDidDisconnect?(peer.role, peer: peer)
+                self.membershipRosterDelegate?.peerDidDisconnect?(peer.role, peer: peer, canConnectNow: canConnectNow)
             })
         case .notConnected:
             assert(false, "ERROR: state is being tracked wrong")
@@ -1003,27 +1010,9 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             if oldState == .awaitingAuth {
                 peer.connectAttemptFailAuthRejectCount += 1
             }
-            
             self.dispatch_on_delegate_queue({
                 self.membershipRosterDelegate?.peerConnectionAttemptFailed?(peer.role, peer: peer, isAuthRejection: oldState == .awaitingAuth)
             })
-        }
-
-        guard let lastService = peer.pickedResolvedService(), let hhaddresses = lastService.resolvedAddressInfo else {
-            DLog("socketDidDisconnect: not reannouncing, since last resolved service's resolvedAddressInfo is nil")
-            return
-        }
-        
-        if hhaddresses.count > 0 {
-            if abs(peer.lastReannounce.timeIntervalSinceNow) > 2.0 {
-                peer.lastReannounce = Date.init()
-                DLog("\(peer.displayName) socketDidDisconnect: re-announcing now")
-                self.announcePeer(peer: peer)
-            } else {
-                DLog("\(peer.displayName) socketDidDisconnect: NOT re-announcing, too quick")
-            }
-        } else {
-            DLog("\(peer.displayName) socketDidDisconnect: not reannouncing, since there are no addresses")
         }
     }
     
