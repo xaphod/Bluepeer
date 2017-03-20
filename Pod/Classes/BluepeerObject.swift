@@ -199,7 +199,6 @@ func DLog(_ items: CustomStringConvertible...) {
     let keepAliveHeader: Data = "0 ! 0 ! 0 ! 0 ! 0 ! 0 ! 0 ! ".data(using: String.Encoding.utf8)! // A special header kept to avoid timeouts
     let socketQueue = DispatchQueue(label: "xaphod.bluepeer.socketQueue", attributes: [])
     var browsingWorkaroundRestarts = 0
-    var lastCycle = Date.init(timeIntervalSince1970: 0)
     
     enum DataTag: Int {
         case tag_HEADER = 1
@@ -266,8 +265,7 @@ func DLog(_ items: CustomStringConvertible...) {
         let formatter = DateFormatter.init()
         formatter.dateStyle = .none
         formatter.timeStyle = .medium
-        let cycleStr = self.lastCycle.timeIntervalSince1970 == 0 ? "None" : formatter.string(from: self.lastCycle)
-        var retval = "Last cycle: \(cycleStr)\n\n"
+        var retval = ""
         for peer in self.peers {
             retval += peer.description + "\n"
         }
@@ -621,66 +619,6 @@ func DLog(_ items: CustomStringConvertible...) {
             DLog("announcePeer: app is in BACKGROUND, no-op!")
         }
     }
-    
-    fileprivate func cycleAdvertisingAndBrowsingCheck() {
-        if self.persistentConnectionMode == false {
-            return
-        }
-        
-        func cycleCausedByPeer() -> Bool {
-            for peer in self.peers {
-                if (peer.socket == nil || peer.socket?.isConnected == false) && (peer.services.count == 0) {
-                    DLog("%%% \(peer.displayName) ELIGIBLE TO CAUSE CYCLE %%%")
-                    return true
-                }
-            }
-            return false
-        }
-        
-//        func cycleCausedByGlobalConditions() -> Bool {
-//            if self.peers.filter({ $0.state == .authenticated }).count == 0 && self.peers.reduce(0, {$0 + $1.connectCount}) > 0 { // not connected and was ever connected
-//                DLog("%%% GLOBAL CONDITIONS FOR CYCLE DETECTED %%%")
-//                return true
-//            }
-//            return false
-//        }
-        
-        func doCycleNow() {
-            DLog("%%% DOING CYCLE NOW %%%")
-            self.lastCycle = Date.init()
-            let role = self.advertising
-            let customData = self.advertisingCustomData
-            self.stopBrowsing()
-            self.stopAdvertising(leaveServerSocketAlone: true)
-            self.startAdvertising(role!, customData: self.advertisingCustomData)
-            self.startBrowsing()
-        }
-        
-        let maxWindow = 20.0
-        let delaySec = 8.0 + (0.01*Double(arc4random_uniform(500))) // if too short, cycles too quickly and nothing gets found
-        if cycleCausedByPeer() { // || cycleCausedByGlobalConditions() {
-            DLog("%%% Will do a browse/advertise cycle in \(delaySec)sec if still eligible %%%")
-            self.socketQueue.asyncAfter(deadline: .now() + delaySec, execute: {
-                if cycleCausedByPeer() { // || cycleCausedByGlobalConditions() {
-                    if abs(self.lastCycle.timeIntervalSinceNow) < maxWindow {
-                        DLog("%%% cycle-flood, calling again in \(maxWindow - self.lastCycle.timeIntervalSinceNow)sec... %%%")
-                        self.socketQueue.asyncAfter(deadline: .now() + (maxWindow - self.lastCycle.timeIntervalSinceNow) + 0.1, execute: {
-                            self.cycleAdvertisingAndBrowsingCheck()
-                        })
-                        return
-                    }
-
-                    doCycleNow()
-                    
-                    self.socketQueue.asyncAfter(deadline: .now() + maxWindow + 0.1, execute: {
-                        self.cycleAdvertisingAndBrowsingCheck()
-                    })
-                } else {
-                    DLog("%%% Cycle AVERTED %%%")
-                }
-            })
-        }
-    }
 }
 
 extension GCDAsyncSocket {
@@ -782,7 +720,6 @@ extension BluepeerObject : HHServiceBrowserDelegate {
                         self.membershipAdminDelegate?.browserLostPeer?(peer.role, peer: peer)
                     })
                 }
-                self.cycleAdvertisingAndBrowsingCheck()
             } else {
                 DLog("didRemoveService - \(peer.displayName) has no matching service (no-op)")
             }
@@ -1072,8 +1009,6 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             })
         }
 
-        self.cycleAdvertisingAndBrowsingCheck()
-
         guard let lastService = peer.pickedResolvedService(), let hhaddresses = lastService.resolvedAddressInfo else {
             DLog("socketDidDisconnect: not reannouncing, since last resolved service's resolvedAddressInfo is nil")
             return
@@ -1105,7 +1040,6 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             return
         }
         self.scheduleNextKeepaliveTimer(peer)
-        self.cycleAdvertisingAndBrowsingCheck()
 
         if tag == DataTag.tag_AUTH.rawValue {
             if data.count != 1 {
