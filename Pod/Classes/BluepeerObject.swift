@@ -622,22 +622,10 @@ func DLog(_ items: CustomStringConvertible...) {
         }
     }
     
-    private var floodProtect = false
     fileprivate func cycleAdvertisingAndBrowsingCheck() {
-        if self.persistentConnectionMode == false || floodProtect == true {
+        if self.persistentConnectionMode == false {
             return
         }
-        let maxWindow = 20.0
-        if abs(self.lastCycle.timeIntervalSinceNow) < maxWindow {
-            floodProtect = true
-            DLog("%%% cycled within 20sec, calling again in \(maxWindow - self.lastCycle.timeIntervalSinceNow)sec... %%%")
-            self.socketQueue.asyncAfter(deadline: .now() + (maxWindow - self.lastCycle.timeIntervalSinceNow), execute: {
-                self.floodProtect = false
-                self.cycleAdvertisingAndBrowsingCheck()
-            })
-            return
-        }
-        let delaySec = 8.0 + (0.01*Double(arc4random_uniform(500))) // if too short, cycles too quickly and nothing gets found
         
         func cycleCausedByPeer() -> Bool {
             for peer in self.peers {
@@ -668,12 +656,25 @@ func DLog(_ items: CustomStringConvertible...) {
             self.startBrowsing()
         }
         
+        let maxWindow = 20.0
+        let delaySec = 8.0 + (0.01*Double(arc4random_uniform(500))) // if too short, cycles too quickly and nothing gets found
         if cycleCausedByPeer() { // || cycleCausedByGlobalConditions() {
             DLog("%%% Will do a browse/advertise cycle in \(delaySec)sec if still eligible %%%")
             self.socketQueue.asyncAfter(deadline: .now() + delaySec, execute: {
                 if cycleCausedByPeer() { // || cycleCausedByGlobalConditions() {
+                    if abs(self.lastCycle.timeIntervalSinceNow) < maxWindow {
+                        DLog("%%% cycle-flood, calling again in \(maxWindow - self.lastCycle.timeIntervalSinceNow)sec... %%%")
+                        self.socketQueue.asyncAfter(deadline: .now() + (maxWindow - self.lastCycle.timeIntervalSinceNow) + 0.1, execute: {
+                            self.cycleAdvertisingAndBrowsingCheck()
+                        })
+                        return
+                    }
+
                     doCycleNow()
-                    self.socketQueue.asyncAfter(deadline: .now() + maxWindow + 0.1, execute: { self.cycleAdvertisingAndBrowsingCheck() })
+                    
+                    self.socketQueue.asyncAfter(deadline: .now() + maxWindow + 0.1, execute: {
+                        self.cycleAdvertisingAndBrowsingCheck()
+                    })
                 } else {
                     DLog("%%% Cycle AVERTED %%%")
                 }
@@ -919,7 +920,8 @@ extension BluepeerObject : HHServiceDelegate {
                 peer.socket = GCDAsyncSocket.init(delegate: self, delegateQueue: self.socketQueue)
                 peer.socket?.isIPv4PreferredOverIPv6 = false
                 peer.state = .connecting
-                try peer.socket?.connect(toAddress: sockdata, viaInterface: chosenAddress.interfaceName, withTimeout: 10.0)
+                try peer.socket?.connect(toAddress: sockdata, withTimeout: 10.0)
+//                try peer.socket?.connect(toAddress: sockdata, viaInterface: chosenAddress.interfaceName, withTimeout: 10.0)
             } catch {
                 DLog("could not connect, ERROR: \(error)")
                 peer.state = .notConnected
