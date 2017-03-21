@@ -89,6 +89,7 @@ public enum BPPeerState: Int, CustomStringConvertible {
         }
         services = [HHService]()
     }
+    fileprivate var lastInterfaceNameChosenForConnect: String?
     open var keepaliveTimer: Timer?
     open var lastReceivedData: Date = Date.init(timeIntervalSince1970: 0)
     open var connect: (()->Void)?
@@ -110,7 +111,7 @@ public enum BPPeerState: Int, CustomStringConvertible {
 @objc public protocol BluepeerMembershipRosterDelegate {
     @objc optional func peerDidConnect(_ peerRole: RoleType, peer: BPPeer)
     @objc optional func peerDidDisconnect(_ peerRole: RoleType, peer: BPPeer, canConnectNow: Bool) // canConnectNow: true if this peer is still announce-able, ie. can now call connect() on it
-    @objc optional func peerConnectionAttemptFailed(_ peerRole: RoleType, peer: BPPeer?, isAuthRejection: Bool)
+    @objc optional func peerConnectionAttemptFailed(_ peerRole: RoleType, peer: BPPeer?, isAuthRejection: Bool, canConnectNow: Bool)
 }
 
 @objc public protocol BluepeerMembershipAdminDelegate {
@@ -825,19 +826,43 @@ extension BluepeerObject : HHServiceDelegate {
         peer.connect = {
             do {
                 // pick the address to connect to INSIDE the block, because more addresses may have been added between announcement and inviteBlock being executed
-                guard let hhaddresses = peer.pickedResolvedService()?.resolvedAddressInfo, hhaddresses.count > 0, var chosenAddress = hhaddresses.filter({ $0.isCandidateAddress(bluetoothOnly: limitToBluetooth) }).first else {
-                    DLog("connect: \(peer.displayName) has no resolvedAddresses or candidates after invite accepted/rejected, BAILING")
+                guard let hhaddresses = peer.pickedResolvedService()?.resolvedAddressInfo, hhaddresses.count > 0 else {
+                    DLog("connect: \(peer.displayName) has no resolvedAddresses after invite accepted/rejected, BAILING")
                     return
                 }
                 
-                // if we can use wifi, then use wifi if possible
-                if !self.bluetoothOnly && !chosenAddress.isWifiInterface() {
-                    let wifiCandidates = hhaddresses.filter({ $0.isCandidateAddress(bluetoothOnly: self.bluetoothOnly) && $0.isWifiInterface() })
-                    if wifiCandidates.count > 0 {
-                        chosenAddress = wifiCandidates.first!
+                var candidateAddresses = hhaddresses.filter({ $0.isCandidateAddress(bluetoothOnly: limitToBluetooth) })
+                guard candidateAddresses.count != 0 else {
+                    DLog("connect: \(peer.displayName) has no candidates out of non-zero resolvedAddresses after invite accepted/rejected, BAILING")
+                    return
+                }
+                
+                // We have N candidateAddresses from 1 resolved service, which should we pick?
+                // if we tried to connect to one recently and failed, and there's another one, pick the other one
+                var interimAddress: HHAddressInfo?
+                if let lastInterfaceNameChosenForConnect = peer.lastInterfaceNameChosenForConnect, candidateAddresses.count > 1 {
+                    let otherAddresses = candidateAddresses.filter { $0.interfaceName != lastInterfaceNameChosenForConnect }
+                    if otherAddresses.count > 0 {
+                        interimAddress = otherAddresses.first!
+                        DLog("connect: \(peer.displayName) trying a different interface than last attempt. Now trying: \(interimAddress!.interfaceName)")
                     }
                 }
                 
+                var chosenAddress = candidateAddresses.first!
+                if let interimAddress = interimAddress {
+                    // first priority is not always trying to reconnect on the same interface when >1 is available
+                    chosenAddress = interimAddress
+                } else {
+                    // second priority is if we can use wifi, then do so
+                    if !self.bluetoothOnly && !chosenAddress.isWifiInterface() {
+                        let wifiCandidates = candidateAddresses.filter({ $0.isWifiInterface() })
+                        if wifiCandidates.count > 0 {
+                            chosenAddress = wifiCandidates.first!
+                        }
+                    }
+                }
+                
+                peer.lastInterfaceNameChosenForConnect = chosenAddress.interfaceName
                 DLog("connect: \(peer.displayName) has \(peer.services.count) svcs (\(peer.resolvedServices().count) resolved); picked service has \(hhaddresses.count) addresses, chose \(chosenAddress.addressAndPortString) on interface \(chosenAddress.interfaceName)")
                 let sockdata = chosenAddress.socketAsData()
                 
@@ -976,7 +1001,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             DLog(" socketDidDisconnect: WARNING expected to find 1 peer with this socket but found \(matchingPeers.count), calling peerConnectionAttemptFailed")
             sock.synchronouslySetDelegate(nil)
             self.dispatch_on_delegate_queue({
-                self.membershipRosterDelegate?.peerConnectionAttemptFailed?(.unknown, peer: nil, isAuthRejection: false)
+                self.membershipRosterDelegate?.peerConnectionAttemptFailed?(.unknown, peer: nil, isAuthRejection: false, canConnectNow: false)
             })
             return
         }
@@ -989,19 +1014,11 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
         peer.socket = nil
         sock.synchronouslySetDelegate(nil)
         
-        // is it still valid to call connect() on this peer?
-        var canConnectNow = false
-        if let lastService = peer.pickedResolvedService(),
-            let hhaddresses = lastService.resolvedAddressInfo,
-            hhaddresses.count > 0 {
-            canConnectNow = true
-        }
-        
         switch oldState {
         case .authenticated:
             peer.disconnectCount += 1
             self.dispatch_on_delegate_queue({
-                self.membershipRosterDelegate?.peerDidDisconnect?(peer.role, peer: peer, canConnectNow: canConnectNow)
+                self.membershipRosterDelegate?.peerDidDisconnect?(peer.role, peer: peer, canConnectNow: self.canConnectNow(peer))
             })
         case .notConnected:
             assert(false, "ERROR: state is being tracked wrong")
@@ -1011,9 +1028,19 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
                 peer.connectAttemptFailAuthRejectCount += 1
             }
             self.dispatch_on_delegate_queue({
-                self.membershipRosterDelegate?.peerConnectionAttemptFailed?(peer.role, peer: peer, isAuthRejection: oldState == .awaitingAuth)
+                self.membershipRosterDelegate?.peerConnectionAttemptFailed?(peer.role, peer: peer, isAuthRejection: oldState == .awaitingAuth, canConnectNow: self.canConnectNow(peer))
             })
         }
+    }
+    
+    fileprivate func canConnectNow(_ peer: BPPeer) -> Bool {
+        // is it still valid to call connect() on this peer?
+        if let lastService = peer.pickedResolvedService(),
+            let hhaddresses = lastService.resolvedAddressInfo,
+            hhaddresses.count > 0 {
+            return true
+        }
+        return false
     }
     
     fileprivate func disconnectSocket(socket: GCDAsyncSocket?, peer: BPPeer) {
