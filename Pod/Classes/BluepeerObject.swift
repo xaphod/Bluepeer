@@ -250,7 +250,7 @@ func DLog(_ items: CustomStringConvertible...) {
             NotificationCenter.default.addObserver(self, selector: #selector(willEnterForeground), name: NSNotification.Name.NSExtensionHostWillEnterForeground, object: nil)
         } 
         
-        DLog("Initialized BluepeerObject. Name: \(self.displayNameSanitized), bluetoothOnly: \(self.bluetoothOnly ? "yes" : "no")")
+        DLog("Initialized. Name: \(self.displayNameSanitized), bluetoothOnly: \(self.bluetoothOnly ? "yes" : "no")")
     }
     
     deinit {
@@ -1015,13 +1015,13 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
     public func socketDidDisconnect(_ sock: GCDAsyncSocket, withError err: Error?) {
         let matchingPeers = self.peers.filter({ $0.socket == sock})
         if matchingPeers.count != 1 {
-            DLog(" socketDidDisconnect: WARNING expected to find 1 peer with this socket but found \(matchingPeers.count), calling peerConnectionAttemptFailed. Cycling serverSocket!")
-            if let adRole = self.advertisingRole {
-                self.socketQueue.asyncAfter(deadline: .now() + 2.0, execute: {
-                    self.stopAdvertising()
-                    self.startAdvertising(adRole, customData: self.advertisingCustomData)
-                })
-            }
+            DLog(" socketDidDisconnect: WARNING expected to find 1 peer with this socket but found \(matchingPeers.count), calling peerConnectionAttemptFailed.")
+//            if let adRole = self.advertisingRole {
+//                self.socketQueue.asyncAfter(deadline: .now() + 2.0, execute: {
+//                    self.stopAdvertising()
+//                    self.startAdvertising(adRole, customData: self.advertisingCustomData)
+//                })
+//            }
             sock.synchronouslySetDelegate(nil)
             self.dispatch_on_delegate_queue({
                 self.membershipRosterDelegate?.peerConnectionAttemptFailed?(.unknown, peer: nil, isAuthRejection: false, canConnectNow: false)
@@ -1040,13 +1040,13 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
         switch oldState {
         case .authenticated:
             peer.disconnectCount += 1
-            if let lastInterface = peer.lastInterfaceName, lastInterface != iOS_wifi_interface, let adRole = self.advertisingRole {
-                self.socketQueue.asyncAfter(deadline: .now() + 2.0, execute: {
-                    DLog("Previously connected peer disconnected on non-wifi interface. Cycling server socket now")
-                    self.stopAdvertising()
-                    self.startAdvertising(adRole, customData: self.advertisingCustomData)
-                })
-            }
+//            if let lastInterface = peer.lastInterfaceName, lastInterface != iOS_wifi_interface, let adRole = self.advertisingRole {
+//                self.socketQueue.asyncAfter(deadline: .now() + 2.0, execute: {
+//                    DLog("Previously connected peer disconnected on non-wifi interface. Cycling server socket now")
+//                    self.stopAdvertising()
+//                    self.startAdvertising(adRole, customData: self.advertisingCustomData)
+//                })
+//            }
             
             self.dispatch_on_delegate_queue({
                 self.membershipRosterDelegate?.peerDidDisconnect?(peer.role, peer: peer, canConnectNow: self.canConnectNow(peer))
