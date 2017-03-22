@@ -106,7 +106,7 @@ public enum BPPeerState: Int, CustomStringConvertible {
                 socketDesc = "NOT connected"
             }
         }
-        return "\n[" + displayName + " is \(state) as \(role) on \(lastInterfaceName ?? "nil"). C:\(connectCount) D:\(disconnectCount) cFail:\(connectAttemptFailCount) cFailAuth:\(connectAttemptFailAuthRejectCount), Data In#:\(dataRecvCount) InLast: \(lastReceivedData), Out#:\(dataSendCount). Socket: " + socketDesc + ", services#: \(services.count) (\(resolvedServices().count) resolved)]"
+        return "\n[\(displayName) is \(state) as \(role) on \(lastInterfaceName ?? "nil"). C:\(connectCount) D:\(disconnectCount) cFail:\(connectAttemptFailCount) cFailAuth:\(connectAttemptFailAuthRejectCount), Data In#:\(dataRecvCount) InLast: \(lastReceivedData), Out#:\(dataSendCount). Socket: \(socketDesc), services#: \(services.count) (\(resolvedServices().count) resolved)]"
     }
 }
 
@@ -173,7 +173,7 @@ func DLog(_ items: CustomStringConvertible...) {
     var publisher: HHServicePublisher?
     var browser: HHServiceBrowser?
     var bluetoothOnly: Bool = false
-    open var advertising: RoleType?
+    open var advertisingRole: RoleType?
     var advertisingCustomData: [String:String]?
     open var browsing: Bool = false
     var onLastBackground: (advertising: RoleType?, browsing: Bool) = (nil, false)
@@ -276,7 +276,7 @@ func DLog(_ items: CustomStringConvertible...) {
     // Note: if I disconnect, then my delegate is expected to reconnect if needed.
     func didEnterBackground() {
         self.appIsInBackground = true
-        self.onLastBackground = (self.advertising, self.browsing)
+        self.onLastBackground = (self.advertisingRole, self.browsing)
         stopBrowsing()
         stopAdvertising()
         if disconnectOnBackground {
@@ -370,7 +370,7 @@ func DLog(_ items: CustomStringConvertible...) {
     
     // specify customData if this is needed for browser to decide whether to connect or not. Each key and value should be less than 255 bytes, and the total should be less than 1300 bytes.
     open func startAdvertising(_ role: RoleType, customData: [String:String]?) {
-        if let _ = self.advertising {
+        if let _ = self.advertisingRole {
             DLog("Already advertising (no-op)")
             return
         }
@@ -411,18 +411,18 @@ func DLog(_ items: CustomStringConvertible...) {
             DLog(" ERROR: could not start advertising")
             assert(false, "ERROR could not start advertising")
             self.publisher = nil
-            self.advertising = nil
+            self.advertisingRole = nil
             return
         }
         // serverSocket is created in didPublish delegate (from HHServicePublisherDelegate) below
-        self.advertising = role
+        self.advertisingRole = role
     }
     
     open func stopAdvertising(leaveServerSocketAlone: Bool = false) {
-        if let _ = self.advertising {
+        if let _ = self.advertisingRole {
             guard let publisher = self.publisher else {
                 DLog("publisher is MIA while advertising set true! ERROR. Setting advertising=false")
-                self.advertising = nil
+                self.advertisingRole = nil
                 return
             }
             publisher.endPublish()
@@ -431,7 +431,7 @@ func DLog(_ items: CustomStringConvertible...) {
             DLog("no advertising to stop (no-op)")
         }
         self.publisher = nil
-        self.advertising = nil
+        self.advertisingRole = nil
         if leaveServerSocketAlone == false {
             self.destroyServerSocket()
         }
@@ -672,7 +672,7 @@ extension BluepeerObject : HHServicePublisherDelegate {
     }
     
     public func serviceDidNotPublish(_ servicePublisher: HHServicePublisher) {
-        self.advertising = nil
+        self.advertisingRole = nil
         DLog("ERROR: serviceDidNotPublish")
     }
 }
@@ -1016,8 +1016,12 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
         let matchingPeers = self.peers.filter({ $0.socket == sock})
         if matchingPeers.count != 1 {
             DLog(" socketDidDisconnect: WARNING expected to find 1 peer with this socket but found \(matchingPeers.count), calling peerConnectionAttemptFailed. Cycling serverSocket!")
-            self.destroyServerSocket()
-            self.createServerSocket()
+            if let adRole = self.advertisingRole {
+                self.socketQueue.asyncAfter(deadline: .now() + 2.0, execute: {
+                    self.stopAdvertising()
+                    self.startAdvertising(adRole, customData: self.advertisingCustomData)
+                })
+            }
             sock.synchronouslySetDelegate(nil)
             self.dispatch_on_delegate_queue({
                 self.membershipRosterDelegate?.peerConnectionAttemptFailed?(.unknown, peer: nil, isAuthRejection: false, canConnectNow: false)
@@ -1036,10 +1040,12 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
         switch oldState {
         case .authenticated:
             peer.disconnectCount += 1
-            if let lastInterface = peer.lastInterfaceName, lastInterface != iOS_wifi_interface {
-                DLog("Previously connected peer disconnected on non-wifi interface. Cycling server socket now")
-                self.destroyServerSocket()
-                self.createServerSocket()
+            if let lastInterface = peer.lastInterfaceName, lastInterface != iOS_wifi_interface, let adRole = self.advertisingRole {
+                self.socketQueue.asyncAfter(deadline: .now() + 2.0, execute: {
+                    DLog("Previously connected peer disconnected on non-wifi interface. Cycling server socket now")
+                    self.stopAdvertising()
+                    self.startAdvertising(adRole, customData: self.advertisingCustomData)
+                })
             }
             
             self.dispatch_on_delegate_queue({
@@ -1147,11 +1153,13 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
                         peer.customData = existingCustomData
                     }
                 }
+                existingPeer.customData = nil
                 peer.services.append(contentsOf: existingPeer.services)
                 existingPeer.keepaliveTimer?.invalidate()
                 existingPeer.keepaliveTimer = nil
                 self.disconnectSocket(socket: existingPeer.socket, peer: existingPeer)
                 self.peers.remove(at: indexOfPeer)
+                DLog("... removed")
             }
             
             if let delegate = self.membershipAdminDelegate {
