@@ -11,8 +11,10 @@ import CFNetwork
 import CocoaAsyncSocket // NOTE: requires pod CocoaAsyncSocket
 import HHServices
 import dnssd
+import xaphodObjCUtils
 
 let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2
+let iOS_wifi_interface = "en0"
 
 // "Any" means can be both a client and a server. If accepting a new connection from another peer, that peer is deemed a client. If found an advertising .any peer, that peer is considered a server.
 @objc public enum RoleType: Int, CustomStringConvertible {
@@ -89,7 +91,7 @@ public enum BPPeerState: Int, CustomStringConvertible {
         }
         services = [HHService]()
     }
-    fileprivate var lastInterfaceNameChosenForConnect: String?
+    fileprivate var lastInterfaceName: String?
     open var keepaliveTimer: Timer?
     open var lastReceivedData: Date = Date.init(timeIntervalSince1970: 0)
     open var connect: (()->Void)?
@@ -104,14 +106,14 @@ public enum BPPeerState: Int, CustomStringConvertible {
                 socketDesc = "NOT connected"
             }
         }
-        return "\n[" + displayName + " is \(state) as \(role). C:\(connectCount) D:\(disconnectCount) cFail:\(connectAttemptFailCount) cFailAuth:\(connectAttemptFailAuthRejectCount), Data In#:\(dataRecvCount) InLast: \(lastReceivedData), Out#:\(dataSendCount). Socket: " + socketDesc + ", services#: \(services.count) (\(resolvedServices().count) resolved)]"
+        return "\n[" + displayName + " is \(state) as \(role) on \(lastInterfaceName ?? "nil"). C:\(connectCount) D:\(disconnectCount) cFail:\(connectAttemptFailCount) cFailAuth:\(connectAttemptFailAuthRejectCount), Data In#:\(dataRecvCount) InLast: \(lastReceivedData), Out#:\(dataSendCount). Socket: " + socketDesc + ", services#: \(services.count) (\(resolvedServices().count) resolved)]"
     }
 }
 
 @objc public protocol BluepeerMembershipRosterDelegate {
     @objc optional func peerDidConnect(_ peerRole: RoleType, peer: BPPeer)
-    @objc optional func peerDidDisconnect(_ peerRole: RoleType, peer: BPPeer, canConnectNow: Bool) // canConnectNow: true if this peer is still announce-able, ie. can now call connect() on it
-    @objc optional func peerConnectionAttemptFailed(_ peerRole: RoleType, peer: BPPeer?, isAuthRejection: Bool, canConnectNow: Bool)
+    @objc optional func peerDidDisconnect(_ peerRole: RoleType, peer: BPPeer, canConnectNow: Bool) // canConnectNow: true if this peer is still announce-able, ie. can now call connect() on it. Note, it is highly recommended to have a ~2 sec delay before calling connect() to avoid 100% CPU loops
+    @objc optional func peerConnectionAttemptFailed(_ peerRole: RoleType, peer: BPPeer?, isAuthRejection: Bool, canConnectNow: Bool) // canConnectNow: true if this peer is still announce-able, ie. can now call connect() on it. Note, it is highly recommended to have a ~2 sec delay before calling connect() to avoid 100% CPU loops
 }
 
 @objc public protocol BluepeerMembershipAdminDelegate {
@@ -431,12 +433,35 @@ func DLog(_ items: CustomStringConvertible...) {
         self.publisher = nil
         self.advertising = nil
         if leaveServerSocketAlone == false {
-            if let socket = self.serverSocket {
-                socket.synchronouslySetDelegate(nil)
-                socket.disconnect()
-                self.serverSocket = nil
-                DLog("destroyed serverSocket")
-            }
+            self.destroyServerSocket()
+        }
+    }
+    
+    fileprivate func createServerSocket() -> Bool {
+        self.serverSocket = GCDAsyncSocket.init(delegate: self, delegateQueue: socketQueue)
+        self.serverSocket?.isIPv4PreferredOverIPv6 = false
+        guard let serverSocket = self.serverSocket else {
+            DLog("ERROR - Could not create serverSocket")
+            return false
+        }
+        
+        do {
+            try serverSocket.accept(onPort: serverPort)
+        } catch {
+            DLog("ERROR accepting on serverSocket")
+            return false
+        }
+
+        DLog("Created serverSocket, is accepting on \(serverPort)")
+        return true
+    }
+    
+    fileprivate func destroyServerSocket() {
+        if let socket = self.serverSocket {
+            socket.synchronouslySetDelegate(nil)
+            socket.disconnect()
+            self.serverSocket = nil
+            DLog("Destroyed serverSocket")
         }
     }
     
@@ -638,17 +663,7 @@ extension BluepeerObject : HHServicePublisherDelegate {
         if let socket = self.serverSocket {
             DLog("serviceDidPublish: USING EXISTING SERVERSOCKET \(socket)")
         } else {
-            self.serverSocket = GCDAsyncSocket.init(delegate: self, delegateQueue: socketQueue)
-            self.serverSocket?.isIPv4PreferredOverIPv6 = false
-            guard let serverSocket = self.serverSocket else {
-                DLog("ERROR - Could not create serverSocket")
-                return
-            }
-            
-            do {
-                try serverSocket.accept(onPort: serverPort)
-            } catch {
-                DLog("ERROR accepting on serverSocket")
+            if self.createServerSocket() == false {
                 return
             }
         }
@@ -840,8 +855,8 @@ extension BluepeerObject : HHServiceDelegate {
                 // We have N candidateAddresses from 1 resolved service, which should we pick?
                 // if we tried to connect to one recently and failed, and there's another one, pick the other one
                 var interimAddress: HHAddressInfo?
-                if let lastInterfaceNameChosenForConnect = peer.lastInterfaceNameChosenForConnect, candidateAddresses.count > 1 {
-                    let otherAddresses = candidateAddresses.filter { $0.interfaceName != lastInterfaceNameChosenForConnect }
+                if let lastInterfaceName = peer.lastInterfaceName, candidateAddresses.count > 1 {
+                    let otherAddresses = candidateAddresses.filter { $0.interfaceName != lastInterfaceName }
                     if otherAddresses.count > 0 {
                         interimAddress = otherAddresses.first!
                         DLog("connect: \(peer.displayName) trying a different interface than last attempt. Now trying: \(interimAddress!.interfaceName)")
@@ -862,7 +877,7 @@ extension BluepeerObject : HHServiceDelegate {
                     }
                 }
                 
-                peer.lastInterfaceNameChosenForConnect = chosenAddress.interfaceName
+                peer.lastInterfaceName = chosenAddress.interfaceName
                 DLog("connect: \(peer.displayName) has \(peer.services.count) svcs (\(peer.resolvedServices().count) resolved); picked service has \(hhaddresses.count) addresses, chose \(chosenAddress.addressAndPortString) on interface \(chosenAddress.interfaceName)")
                 let sockdata = chosenAddress.socketAsData()
                 
@@ -909,7 +924,7 @@ extension HHAddressInfo {
     }
     
     func isWifiInterface() -> Bool {
-        return self.interfaceName == "en0"
+        return self.interfaceName == iOS_wifi_interface
     }
     
     func socketAsData() -> Data {
@@ -965,8 +980,10 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             newPeer.state = .awaitingAuth
             newPeer.role = .client
             newPeer.socket = newSocket
+            newPeer.lastInterfaceName = XaphodUtils.interfaceName(ofLocalIpAddress: newSocket.localHost!)
+            
             self.peers.append(newPeer) // always add as a new peer, even if it already exists. This might result in a dupe if we are browsing and advertising for same service. The original will get removed on receiving the name of other device, if it matches
-            DLog("accepting new connection from \(connectedHost). Peers(n=\(self.peers.count)) after adding")
+            DLog("accepting new connection from \(connectedHost) on \(newPeer.lastInterfaceName). Peers(n=\(self.peers.count)) after adding")
             
             // CONVENTION: CLIENT sends SERVER 32 bytes of its name -- UTF-8 string
             newSocket.readData(toLength: 32, withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_NAME.rawValue)
@@ -998,7 +1015,9 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
     public func socketDidDisconnect(_ sock: GCDAsyncSocket, withError err: Error?) {
         let matchingPeers = self.peers.filter({ $0.socket == sock})
         if matchingPeers.count != 1 {
-            DLog(" socketDidDisconnect: WARNING expected to find 1 peer with this socket but found \(matchingPeers.count), calling peerConnectionAttemptFailed")
+            DLog(" socketDidDisconnect: WARNING expected to find 1 peer with this socket but found \(matchingPeers.count), calling peerConnectionAttemptFailed. Cycling serverSocket!")
+            self.destroyServerSocket()
+            self.createServerSocket()
             sock.synchronouslySetDelegate(nil)
             self.dispatch_on_delegate_queue({
                 self.membershipRosterDelegate?.peerConnectionAttemptFailed?(.unknown, peer: nil, isAuthRejection: false, canConnectNow: false)
@@ -1017,6 +1036,12 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
         switch oldState {
         case .authenticated:
             peer.disconnectCount += 1
+            if let lastInterface = peer.lastInterfaceName, lastInterface != iOS_wifi_interface {
+                DLog("Previously connected peer disconnected on non-wifi interface. Cycling server socket now")
+                self.destroyServerSocket()
+                self.createServerSocket()
+            }
+            
             self.dispatch_on_delegate_queue({
                 self.membershipRosterDelegate?.peerDidDisconnect?(peer.role, peer: peer, canConnectNow: self.canConnectNow(peer))
             })
@@ -1115,6 +1140,13 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
                 peer.dataRecvCount += existingPeer.dataRecvCount
                 peer.dataSendCount += existingPeer.dataSendCount
 //                existingPeer.destroyServices()
+                if let existingCustomData = existingPeer.customData {
+                    if var newCustomData = peer.customData {
+                        newCustomData.merge(with: existingCustomData)
+                    } else {
+                        peer.customData = existingCustomData
+                    }
+                }
                 peer.services.append(contentsOf: existingPeer.services)
                 existingPeer.keepaliveTimer?.invalidate()
                 existingPeer.keepaliveTimer = nil
