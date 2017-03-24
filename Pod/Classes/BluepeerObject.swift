@@ -95,6 +95,10 @@ public enum BPPeerState: Int, CustomStringConvertible {
     open var keepaliveTimer: Timer?
     open var lastReceivedData: Date = Date.init(timeIntervalSince1970: 0)
     open var connect: (()->Void)?
+    open func disconnect() {
+        DLog("\(displayName): disconnect() called")
+        socket?.disconnect()
+    }
     open var customData: [String:AnyHashable]? // store your own data here. When a browser finds an advertiser and creates a peer for it, this will be filled out with the advertiser's customData *even before any connection occurs*. Note that while you can store values that are AnyHashable, only Strings are used as values for advertiser->browser connections.
     var connectCount=0, disconnectCount=0, connectAttemptFailCount=0, connectAttemptFailAuthRejectCount=0, dataRecvCount=0, dataSendCount=0
     override open var description: String {
@@ -180,7 +184,7 @@ func DLog(_ items: CustomStringConvertible...) {
     open var serviceType: String = ""
     var serverPort: UInt16 = 0
     var versionString: String = "unknown"
-    var displayNameSanitized: String = ""
+    open var displayNameSanitized: String = ""
     var appIsInBackground = false
     
     weak open var membershipAdminDelegate: BluepeerMembershipAdminDelegate?
