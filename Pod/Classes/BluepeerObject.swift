@@ -360,12 +360,12 @@ func DLog(_ items: CustomStringConvertible...) {
         self.peers = [] // remove all peers!
     }
     
-    open func connectedRoleCount(_ role: RoleType) -> Int {
-        return self.peers.filter({ $0.role == role && $0.state == .authenticated }).count
+    open func connectedPeers(_ role: RoleType) -> [BPPeer] {
+        return self.peers.filter({ $0.role == role && $0.state == .authenticated })
     }
     
-    open func connectedCount() -> Int {
-        return self.peers.filter({ $0.state == .authenticated }).count
+    open func connectedPeers() -> [BPPeer] {
+        return self.peers.filter({ $0.state == .authenticated })
     }
     
     // specify customData if this is needed for browser to decide whether to connect or not. Each key and value should be less than 255 bytes, and the total should be less than 1300 bytes.
