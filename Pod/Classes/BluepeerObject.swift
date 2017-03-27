@@ -54,6 +54,12 @@ let iOS_wifi_interface = "en0"
     case other = 3
 }
 
+@objc public enum BluepeerInterfaces: Int {
+    case any = 0
+    case infrastructureModeWifiOnly
+    case notWifi
+}
+
 
 public enum BPPeerState: Int, CustomStringConvertible {
     case notConnected = 0
@@ -176,7 +182,7 @@ func DLog(_ items: CustomStringConvertible...) {
     var serverSocket: GCDAsyncSocket?
     var publisher: HHServicePublisher?
     var browser: HHServiceBrowser?
-    var bluetoothOnly: Bool = false
+    fileprivate var bluepeerInterfaces: BluepeerInterfaces = .any
     open var advertisingRole: RoleType?
     var advertisingCustomData: [String:String]?
     open var browsing: Bool = false
@@ -220,7 +226,7 @@ func DLog(_ items: CustomStringConvertible...) {
     }
     
     // if queue isn't given, main queue is used
-    public init?(serviceType: String, displayName:String?, queue:DispatchQueue?, serverPort: UInt16, overBluetoothOnly: Bool, bluetoothBlock: ((_ bluetoothState: BluetoothState)->Void)?) {
+    public init?(serviceType: String, displayName:String?, queue:DispatchQueue?, serverPort: UInt16, interfaces: BluepeerInterfaces?, bluetoothBlock: ((_ bluetoothState: BluetoothState)->Void)?) {
         
         super.init()
         
@@ -232,8 +238,10 @@ func DLog(_ items: CustomStringConvertible...) {
         self.serviceType = "_" + self.sanitizeCharsToDNSChars(str: serviceType) + "._tcp"
         
         self.serverPort = serverPort
-        self.bluetoothOnly = overBluetoothOnly
         self.delegateQueue = queue
+        if let interfaces = interfaces {
+            self.bluepeerInterfaces = interfaces
+        }
         
         var name = UIDevice.current.name
         if let displayName = displayName {
@@ -254,7 +262,7 @@ func DLog(_ items: CustomStringConvertible...) {
             NotificationCenter.default.addObserver(self, selector: #selector(willEnterForeground), name: NSNotification.Name.NSExtensionHostWillEnterForeground, object: nil)
         } 
         
-        DLog("Initialized. Name: \(self.displayNameSanitized), bluetoothOnly: \(self.bluetoothOnly ? "yes" : "no")")
+        DLog("Initialized. Name: \(self.displayNameSanitized)")
     }
     
     deinit {
@@ -406,11 +414,19 @@ func DLog(_ items: CustomStringConvertible...) {
         }
         publisher.delegate = self
         var starting: Bool
-        if (self.bluetoothOnly) {
-            starting = publisher.beginPublishOverBluetoothOnly()
-        } else {
+        
+        switch self.bluepeerInterfaces {
+        case .any:
             starting = publisher.beginPublish()
+            break
+        case .notWifi:
+            starting = publisher.beginPublishOverBluetoothOnly()
+            break
+        case .infrastructureModeWifiOnly:
+            starting = publisher.beginPublish(UInt32(kDNSServiceInterfaceIndexAny), includeP2P: false)
+            break
         }
+        
         if !starting {
             DLog(" ERROR: could not start advertising")
             assert(false, "ERROR could not start advertising")
@@ -482,11 +498,19 @@ func DLog(_ items: CustomStringConvertible...) {
             return
         }
         browser.delegate = self
-        if (self.bluetoothOnly) {
-            self.browsing = browser.beginBrowseOverBluetoothOnly()
-        } else {
+        
+        switch self.bluepeerInterfaces {
+        case .any:
             self.browsing = browser.beginBrowse()
+            break
+        case .notWifi:
+            self.browsing = browser.beginBrowseOverBluetoothOnly()
+            break
+        case .infrastructureModeWifiOnly:
+            self.browsing = browser.beginBrowse(UInt32(kDNSServiceInterfaceIndexAny), includeP2P: false)
+            break
         }
+
         DLog("now browsing")
     }
     
@@ -711,10 +735,16 @@ extension BluepeerObject : HHServiceBrowserDelegate {
             }
             
             let prots = UInt32(kDNSServiceProtocol_IPv4) | UInt32(kDNSServiceProtocol_IPv6)
-            if (self.bluetoothOnly) {
-                service.beginResolve(kDNSServiceInterfaceIndexP2PSwift, includeP2P: true, addressLookupProtocols: prots)
-            } else {
+            switch self.bluepeerInterfaces {
+            case .any:
                 service.beginResolve(UInt32(kDNSServiceInterfaceIndexAny), includeP2P: true, addressLookupProtocols: prots)
+                break
+            case .notWifi:
+                service.beginResolve(kDNSServiceInterfaceIndexP2PSwift, includeP2P: true, addressLookupProtocols: prots)
+                break
+            case .infrastructureModeWifiOnly:
+                service.beginResolve(UInt32(kDNSServiceInterfaceIndexAny), includeP2P: false, addressLookupProtocols: prots)
+                break
             }
         }
     }
@@ -808,19 +838,18 @@ extension BluepeerObject : HHServiceDelegate {
         peer.customData = customData
         DLog("serviceDidResolve for \(peer.displayName) - addresses \(hhaddresses.count), peer.role: \(role), peer.state: \(peer.state), #customData:\(customData.count)")
         
-        var limitToBluetooth = self.bluetoothOnly
-        let candidates = hhaddresses.filter({ $0.isCandidateAddress(bluetoothOnly: limitToBluetooth) })
+        let candidates = hhaddresses.filter({ $0.isCandidateAddress(excludeWifi: self.bluepeerInterfaces == .notWifi, onlyWifi: self.bluepeerInterfaces == .infrastructureModeWifiOnly) })
         if peer.state != .notConnected {
             DLog("... has state!=notConnected, so no-op")
             return
         } else if candidates.count == 0 {
             DLog("... no candidates out of \(hhaddresses.count) addresses. moreComing = \(moreComing)")
-            if hhaddresses.count > 1 && !moreComing {
+            if hhaddresses.count > 1 && !moreComing && self.bluepeerInterfaces == .notWifi {
                 if (self.browsingWorkaroundRestarts >= 3) {
                     DLog(" *** workarounds exhausted! falling back to not bluetoothOnly")
                     self.browsingWorkaroundRestarts = 0
-                    limitToBluetooth = false
-                    let secondaryCandidates = hhaddresses.filter({ $0.isCandidateAddress(bluetoothOnly: limitToBluetooth) })
+                    self.bluepeerInterfaces = .any
+                    let secondaryCandidates = hhaddresses.filter({ $0.isCandidateAddress(excludeWifi: self.bluepeerInterfaces == .notWifi, onlyWifi: self.bluepeerInterfaces == .infrastructureModeWifiOnly) })
                     if (secondaryCandidates.count <= 0) {
                         DLog("... STILL no candidates. Bummer.")
                         return
@@ -850,7 +879,7 @@ extension BluepeerObject : HHServiceDelegate {
                     return
                 }
                 
-                var candidateAddresses = hhaddresses.filter({ $0.isCandidateAddress(bluetoothOnly: limitToBluetooth) })
+                var candidateAddresses = hhaddresses.filter({ $0.isCandidateAddress(excludeWifi: self.bluepeerInterfaces == .notWifi, onlyWifi: self.bluepeerInterfaces == .infrastructureModeWifiOnly) })
                 guard candidateAddresses.count != 0 else {
                     DLog("connect: \(peer.displayName) has no candidates out of non-zero resolvedAddresses after invite accepted/rejected, BAILING")
                     return
@@ -873,7 +902,7 @@ extension BluepeerObject : HHServiceDelegate {
                     chosenAddress = interimAddress
                 } else {
                     // second priority is if we can use wifi, then do so
-                    if !self.bluetoothOnly && !chosenAddress.isWifiInterface() {
+                    if self.bluepeerInterfaces != .notWifi && !chosenAddress.isWifiInterface() {
                         let wifiCandidates = candidateAddresses.filter({ $0.isWifiInterface() })
                         if wifiCandidates.count > 0 {
                             chosenAddress = wifiCandidates.first!
@@ -941,8 +970,11 @@ extension HHAddressInfo {
         return socketAddrData
     }
 
-    func isCandidateAddress(bluetoothOnly: Bool) -> Bool {
-        if bluetoothOnly && self.isWifiInterface() {
+    func isCandidateAddress(excludeWifi: Bool, onlyWifi: Bool) -> Bool {
+        if excludeWifi && self.isWifiInterface() {
+            return false
+        }
+        if onlyWifi && !self.isWifiInterface() {
             return false
         }
         if ProcessInfo().isOperatingSystemAtLeast(OperatingSystemVersion(majorVersion: 10, minorVersion: 0, patchVersion: 0)) {
