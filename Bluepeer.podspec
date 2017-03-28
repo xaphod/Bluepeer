@@ -27,7 +27,7 @@ Pod::Spec.new do |s|
   }
   s.dependency 'CocoaAsyncSocket', '>= 7.4.0'
   s.dependency 'HHServices', '>= 2.0'
-  s.dependency 'xaphodObjCUtils'
+  s.dependency 'xaphodObjCUtils', '>= 0.0.6'
   #s.public_header_files = 'Pod/Classes/*.h'
   #s.xcconfig = {'OTHER_LDFLAGS' => '-ObjC -all_load'}
   #s.prefix_header_file = 'Pod/Classes/EOSFTPServer-Prefix.pch'

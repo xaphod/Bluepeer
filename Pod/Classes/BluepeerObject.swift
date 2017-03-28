@@ -534,7 +534,6 @@ func DLog(_ items: CustomStringConvertible...) {
     
     open func sendData(_ datas: [Data], toPeers:[BPPeer]) throws {
         for data in datas {
-            DLog("sending data size \(data.count) to \(toPeers.count) peers")
             for peer in toPeers {
                 self.sendDataInternal(peer, data: data)
             }
@@ -554,7 +553,6 @@ func DLog(_ items: CustomStringConvertible...) {
             if data.count == 0 {
                 continue
             }
-            DLog(" sending data size \(data.count) to \(targetPeers.count) peers")
             for peer in targetPeers {
                 self.sendDataInternal(peer, data: data)
             }
@@ -564,12 +562,17 @@ func DLog(_ items: CustomStringConvertible...) {
     func sendDataInternal(_ peer: BPPeer, data: Data) {
         // send header first. Then separator. Then send body.
         // length: send as 4-byte, then 4 bytes of unused 0s for now. assumes endianness doesn't change between platforms, ie 23 00 00 00 not 00 00 00 23
-        var length: UInt = UInt(data.count)
+        
+        // zip that data
+        let zippedData = (data as NSData).zlibDeflate()!
+        var length: UInt = UInt(zippedData.count)
         let senddata = NSMutableData.init(bytes: &length, length: 4)
         let unused4bytesdata = NSMutableData.init(length: 4)!
         senddata.append(unused4bytesdata as Data)
         senddata.append(self.headerTerminator)
-        senddata.append(data)
+        senddata.append(zippedData)
+        DLog("sending data to \(peer.displayName): \(data.count) bytes zipped&pkgd to \(senddata.length)")
+
         
 //        DLog("sendDataInternal writes: \((senddata as Data).hex), payload part: \(data.hex)")
         peer.dataSendCount += 1
@@ -1228,10 +1231,10 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             }
             
         } else { // BODY case
+            let unzippedData: Data = (data as NSData).zlibInflate()
             self.dispatch_on_delegate_queue({
-                self.dataDelegate?.didReceiveData(data, fromPeer: peer)
+                self.dataDelegate?.didReceiveData(unzippedData, fromPeer: peer)
             })
-            DLog("reading data from \(peer.displayName)")
             sock.readData(to: self.headerTerminator, withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_HEADER.rawValue)
         }
     }
