@@ -797,11 +797,11 @@ extension BluepeerObject : HHServiceDelegate {
         }
         let dict: NSDictionary = cfdict!.takeUnretainedValue()
         guard let rD = dict["role"] as? Data,
-            var roleStr = String.init(data: rD, encoding: String.Encoding.utf8) else {
+            let roleStr = String.init(data: rD, encoding: String.Encoding.utf8) else {
             DLog("serviceDidResolve IGNORING service because role was missing")
             return
         }
-        var role = RoleType.roleFromString(roleStr)
+        let role = RoleType.roleFromString(roleStr)
         switch role {
         case .unknown:
             assert(false, "Expecting a role that isn't unknown here")
@@ -879,7 +879,7 @@ extension BluepeerObject : HHServiceDelegate {
                     return
                 }
                 
-                var candidateAddresses = hhaddresses.filter({ $0.isCandidateAddress(excludeWifi: self.bluepeerInterfaces == .notWifi, onlyWifi: self.bluepeerInterfaces == .infrastructureModeWifiOnly) })
+                let candidateAddresses = hhaddresses.filter({ $0.isCandidateAddress(excludeWifi: self.bluepeerInterfaces == .notWifi, onlyWifi: self.bluepeerInterfaces == .infrastructureModeWifiOnly) })
                 guard candidateAddresses.count != 0 else {
                     DLog("connect: \(peer.displayName) has no candidates out of non-zero resolvedAddresses after invite accepted/rejected, BAILING")
                     return
@@ -1019,7 +1019,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             newPeer.lastInterfaceName = XaphodUtils.interfaceName(ofLocalIpAddress: newSocket.localHost!)
             
             self.peers.append(newPeer) // always add as a new peer, even if it already exists. This might result in a dupe if we are browsing and advertising for same service. The original will get removed on receiving the name of other device, if it matches
-            DLog("accepting new connection from \(connectedHost) on \(newPeer.lastInterfaceName). Peers(n=\(self.peers.count)) after adding")
+            DLog("accepting new connection from \(connectedHost) on \(String(describing: newPeer.lastInterfaceName)). Peers(n=\(self.peers.count)) after adding")
             
             // CONVENTION: CLIENT sends SERVER 32 bytes of its name -- UTF-8 string
             newSocket.readData(toLength: 32, withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_NAME.rawValue)
@@ -1034,17 +1034,17 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             return
         }
         peer.state = .awaitingAuth
-        DLog("got to state = awaitingAuth with \(sock.connectedHost), sending name then awaiting ACK ('0')")
+        DLog("got to state = awaitingAuth with \(String(describing: sock.connectedHost)), sending name then awaiting ACK ('0')")
         let strData = self.displayNameSanitized.data(using: String.Encoding.utf8)! as NSData
         // Other side is expecting to receive EXACTLY 32 bytes so pad to 32 bytes!
         let paddedStrData: NSMutableData = ("                                ".data(using: String.Encoding.utf8) as NSData?)?.mutableCopy() as! NSMutableData // that's 32 spaces :)
         paddedStrData.replaceBytes(in: NSMakeRange(0, strData.length), withBytes: strData.bytes)
         
-        DLog("didConnect to \(sock.connectedHost), writing name: \((paddedStrData as Data).hex)")
+        DLog("didConnect to \(String(describing: sock.connectedHost)), writing name: \((paddedStrData as Data).hex)")
         sock.write(paddedStrData as Data, withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_WRITING.rawValue)
         
         // now await auth
-        DLog("waiting to read Auth from \(sock.connectedHost)...")
+        DLog("waiting to read Auth from \(String(describing: sock.connectedHost))...")
         sock.readData(toLength: 1, withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_AUTH.rawValue)
     }
     
