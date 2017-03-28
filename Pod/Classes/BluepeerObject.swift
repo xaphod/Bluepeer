@@ -1087,8 +1087,9 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             self.dispatch_on_delegate_queue({
                 self.membershipRosterDelegate?.peerDidDisconnect?(peer.role, peer: peer, canConnectNow: self.canConnectNow(peer))
             })
+            break
         case .notConnected:
-            assert(false, "ERROR: state is being tracked wrong")
+            break
         case .connecting, .awaitingAuth:
             peer.connectAttemptFailCount += 1
             if oldState == .awaitingAuth {
@@ -1097,6 +1098,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             self.dispatch_on_delegate_queue({
                 self.membershipRosterDelegate?.peerConnectionAttemptFailed?(peer.role, peer: peer, isAuthRejection: oldState == .awaitingAuth, canConnectNow: self.canConnectNow(peer))
             })
+            break
         }
     }
     
