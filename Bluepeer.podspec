@@ -21,13 +21,27 @@ Pod::Spec.new do |s|
 
   s.platform     = :ios, '8.1'
   s.requires_arc = true
-  s.source_files = 'Pod/Classes/*.{swift,m,h}'
-  s.resource_bundles = {
-    'Bluepeer' => ['Pod/Assets/*.{lproj,storyboard}']
-  }
-  s.dependency 'CocoaAsyncSocket', '>= 7.4.0'
-  s.dependency 'HHServices', '>= 2.0'
-  s.dependency 'xaphodObjCUtils', '>= 0.0.6'
+
+  s.subspec 'Core' do |core|
+    core.source_files = 'Core/*.{swift,m,h}'
+    core.resource_bundles = {
+      'Bluepeer' => ['Assets/*.{lproj,storyboard}']
+    }
+    core.dependency 'CocoaAsyncSocket', '>= 7.4.0'
+    core.dependency 'HHServices', '>= 2.0'
+    core.dependency 'xaphodObjCUtils', '>= 0.0.6'
+  end
+
+  s.subspec 'HotPotatoNetwork' do |hpn|
+    hpn.source_files = 'HotPotato/*.{swift,m,h}'
+    hpn.dependency 'Bluepeer/Core'
+    hpn.dependency 'ObjectMapper', '~> 2.2'
+  end
+
+  s.subspec 'Multipeer' do |mp|
+    mp.source_files = 'Multipeer/*.{swift,m,h}'
+  end
+
   #s.public_header_files = 'Pod/Classes/*.h'
   #s.xcconfig = {'OTHER_LDFLAGS' => '-ObjC -all_load'}
   #s.prefix_header_file = 'Pod/Classes/EOSFTPServer-Prefix.pch'
