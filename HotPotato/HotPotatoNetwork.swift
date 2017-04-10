@@ -650,3 +650,24 @@ public extension DateFormatter {
     }
 }
 
+public extension Date {
+    // warning, english only
+    func relativeTimeStringFromNow() -> String {
+        let dateComponents = Calendar.current.dateComponents([.minute, .hour, .day, .weekOfYear], from: self, to: Date.init())
+        if dateComponents.weekOfYear == 0 && dateComponents.day == 0  && dateComponents.hour == 0 {
+            // show minutes
+            return "\(dateComponents.minute!) minute(s) ago"
+        } else if dateComponents.weekOfYear == 0 && dateComponents.day == 0 {
+            // show hours
+            return "\(dateComponents.hour!) hour(s) ago"
+        } else if dateComponents.weekOfYear! < 2 {
+            // show days
+            let days = dateComponents.weekOfYear! * 7 + dateComponents.day!
+           return "\(days) day(s) ago"
+        } else {
+            // show weeks
+            return "\(dateComponents.weekOfYear!) week(s) ago"
+        }
+    }
+}
+
