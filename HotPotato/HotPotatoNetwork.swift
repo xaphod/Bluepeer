@@ -15,7 +15,7 @@ public protocol HandlesHotPotatoMessages {
 
 public protocol HandlesPotato {
     func youStartThePotato() -> Data?  // one of the peers will be asked to start the potato-passing; this function provides the data
-    func youHaveThePotato(potato: Potato, finishBlock: @escaping ()->Void)
+    func youHaveThePotato(potato: Potato, finishBlock: @escaping (_ potato: Potato)->Void)
 }
 
 public protocol HandlesStateChanges {
@@ -352,7 +352,8 @@ open class HotPotatoNetwork: CustomStringConvertible {
         // if we're disconnected, then consider this a reconnection
         self.state = .live
         
-        self.potatoDelegate?.youHaveThePotato(potato: self.potato!, finishBlock: {
+        self.potatoDelegate?.youHaveThePotato(potato: self.potato!, finishBlock: { (potato) in
+            self.potato = potato
             self.passPotato()
         })
     }

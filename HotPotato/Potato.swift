@@ -10,8 +10,8 @@ import ObjectMapper
 let MaxPotatoVisitLength = 10
 
 public struct Potato {
-    var payload: Data? // Does NOT map
-    var visits: [PotatoVisit]?
+    public var payload: Data? // Does NOT map
+    public var visits: [PotatoVisit]?
 }
 
 extension Potato : Mappable {
