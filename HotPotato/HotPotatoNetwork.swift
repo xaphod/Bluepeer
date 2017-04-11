@@ -104,7 +104,7 @@ open class HotPotatoNetwork: CustomStringConvertible {
     // RECEIVING A POTATO -> PAYLOAD
     fileprivate var pendingPotatoHotPotatoMessage: PotatoHotPotatoMessage? // if not nil, then the next received data is the potato's data payload
     
-    // all peers in this network must use the same name and version to connect and start
+    // all peers in this network must use the same name and version to connect and start. timeout is the amount of time the potato must be seen within, until it is considered a disconnect
     required public init(networkName: String, dataVersion: Date, timeout: TimeInterval? = 15.0) {
         self.networkName = networkName
         self.dataVersion = DateFormatter.ISO8601DateFormatter().string(from: dataVersion)
@@ -466,11 +466,11 @@ open class HotPotatoNetwork: CustomStringConvertible {
     // MARK: STARTING
     // MARK:
     
-    open func startNetwork() {
+    open func startNetwork() -> Bool {
         let connectedPeersCount = bluepeer!.connectedPeers().count
         if connectedPeersCount == 0 {
             self.logDelegate?.logString("Aborting startButton - no connected peers")
-            return
+            return false
         }
         
         self.logDelegate?.logString("Sending initial start message, \(connectedPeersCount) connected peers")
@@ -480,6 +480,7 @@ open class HotPotatoNetwork: CustomStringConvertible {
         self.startHotPotatoMessageID = messageID
         let startHotPotatoMessage = StartHotPotatoMessage(remoteDevices: connectedPeersCount, dataVersion: self.dataVersion, ID: messageID, livePeerNames: nil)
         sendHotPotatoMessage(message: startHotPotatoMessage, replyBlock: nil)
+        return true
     }
     
     fileprivate func handleStartHotPotatoMessage(startHotPotatoMessage: StartHotPotatoMessage, peer: BPPeer) {
