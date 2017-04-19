@@ -105,7 +105,7 @@ public enum BPPeerState: Int, CustomStringConvertible {
         DLog("\(displayName): disconnect() called")
         socket?.disconnect()
     }
-    open var customData: [String:AnyHashable]? // store your own data here. When a browser finds an advertiser and creates a peer for it, this will be filled out with the advertiser's customData *even before any connection occurs*. Note that while you can store values that are AnyHashable, only Strings are used as values for advertiser->browser connections.
+    open var customData = [String:AnyHashable]() // store your own data here. When a browser finds an advertiser and creates a peer for it, this will be filled out with the advertiser's customData *even before any connection occurs*. Note that while you can store values that are AnyHashable, only Strings are used as values for advertiser->browser connections.
     var connectCount=0, disconnectCount=0, connectAttemptFailCount=0, connectAttemptFailAuthRejectCount=0, dataRecvCount=0, dataSendCount=0
     override open var description: String {
         var socketDesc = "nil"
@@ -116,7 +116,7 @@ public enum BPPeerState: Int, CustomStringConvertible {
                 socketDesc = "NOT connected"
             }
         }
-        return "\n[\(displayName) is \(state) as \(role) on \(lastInterfaceName ?? "nil"). C:\(connectCount) D:\(disconnectCount) cFail:\(connectAttemptFailCount) cFailAuth:\(connectAttemptFailAuthRejectCount), Data In#:\(dataRecvCount) InLast: \(lastReceivedData), Out#:\(dataSendCount). Socket: \(socketDesc), services#: \(services.count) (\(resolvedServices().count) resolved)]"
+        return "\n[\(displayName) is \(state) as \(role) on \(lastInterfaceName ?? "nil") with \(customData.count) customData keys. C:\(connectCount) D:\(disconnectCount) cFail:\(connectAttemptFailCount) cFailAuth:\(connectAttemptFailAuthRejectCount), Data In#:\(dataRecvCount) InLast: \(lastReceivedData), Out#:\(dataSendCount). Socket: \(socketDesc), services#: \(services.count) (\(resolvedServices().count) resolved)]"
     }
 }
 
@@ -184,7 +184,7 @@ func DLog(_ items: CustomStringConvertible...) {
     var browser: HHServiceBrowser?
     fileprivate var bluepeerInterfaces: BluepeerInterfaces = .any
     open var advertisingRole: RoleType?
-    var advertisingCustomData: [String:String]?
+    var advertisingCustomData = [String:String]()
     open var browsing: Bool = false
     var onLastBackground: (advertising: RoleType?, browsing: Bool) = (nil, false)
     open var serviceType: String = ""
@@ -381,7 +381,7 @@ func DLog(_ items: CustomStringConvertible...) {
     }
     
     // specify customData if this is needed for browser to decide whether to connect or not. Each key and value should be less than 255 bytes, and the total should be less than 1300 bytes.
-    open func startAdvertising(_ role: RoleType, customData: [String:String]?) {
+    open func startAdvertising(_ role: RoleType, customData: [String:String]) {
         if let _ = self.advertisingRole {
             DLog("Already advertising (no-op)")
             return
@@ -396,9 +396,8 @@ func DLog(_ items: CustomStringConvertible...) {
         // Could use the NSNetService version of this (TXTDATA maker), it'd be easier :)
         var swiftdict: [String:String] = ["role":role.description]
         self.advertisingCustomData = customData
-        if let customData = customData {
-            swiftdict.merge(with: customData)
-        }
+        swiftdict.merge(with: customData)
+        
         let cfdata: Unmanaged<CFData>? = CFNetServiceCreateTXTDataWithDictionary(kCFAllocatorDefault, swiftdict as CFDictionary)
         let txtdata = cfdata?.takeUnretainedValue()
         guard let _ = txtdata else {
@@ -1187,14 +1186,14 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
                 peer.dataRecvCount += existingPeer.dataRecvCount
                 peer.dataSendCount += existingPeer.dataSendCount
 //                existingPeer.destroyServices()
-                if let existingCustomData = existingPeer.customData {
-                    if var newCustomData = peer.customData {
-                        newCustomData.merge(with: existingCustomData)
+                if existingPeer.customData.count > 0 {
+                    var newCustomData = peer.customData
+                    if newCustomData.count > 0 {
+                        newCustomData.merge(with: existingPeer.customData)
                     } else {
-                        peer.customData = existingCustomData
+                        peer.customData = existingPeer.customData
                     }
                 }
-                existingPeer.customData = nil
                 peer.services.append(contentsOf: existingPeer.services)
                 existingPeer.keepaliveTimer?.invalidate()
                 existingPeer.keepaliveTimer = nil

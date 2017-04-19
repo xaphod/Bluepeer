@@ -41,6 +41,7 @@ open class HotPotatoNetwork: CustomStringConvertible {
     public enum HPNError: Error {
         case versionMismatch
         case startClientCountMismatch
+        case noCustomData
     }
     
     fileprivate var messageReplyQueue = [String:Queue<(HotPotatoMessage)->Void>]() // dict of message TYPE -> an queue of blocks that take a HotPotatoMessage. These are put here when people SEND data, as replyHandlers - they run max once.
@@ -140,16 +141,6 @@ open class HotPotatoNetwork: CustomStringConvertible {
         self.bluepeer!.startAdvertising(.any, customData: ["id":String(self.deviceIdentifier.hashValue)])
     }
     
-    fileprivate func snapPeerListNow() {
-        for peer in bluepeer!.connectedPeers() {
-            let peerId: String = peer.customData!["id"] as! String
-            let peerIdInt = Int64(peerId)!
-            livePeerNames[peer.displayName] = peerIdInt
-        }
-        livePeerNames[self.bluepeer!.displayNameSanitized] = Int64(self.deviceIdentifier.hashValue)
-        self.logDelegate?.logString("Live peer list has been set to: \(livePeerNames)")
-    }
-    
     fileprivate func emptyPeerListNow() {
         livePeerNames = [String:Int64]()
     }
@@ -225,8 +216,8 @@ open class HotPotatoNetwork: CustomStringConvertible {
             return
         }
         
-        guard let remoteID = peer.customData?["id"] as? String, let remoteIDInt = Int64(remoteID) else {
-            self.logDelegate?.logString("HPN: ERROR, remote ID missing/invalid - \(String(describing: peer.customData?["id"]))")
+        guard let remoteID = peer.customData["id"] as? String, let remoteIDInt = Int64(remoteID) else {
+            self.logDelegate?.logString("HPN: ERROR, remote ID missing/invalid - \(String(describing: peer.customData["id"]))")
             return
         }
         if remoteIDInt > Int64(self.deviceIdentifier.hashValue) {
@@ -530,14 +521,52 @@ open class HotPotatoNetwork: CustomStringConvertible {
             self.startRepliesReceived += 1
             if self.startRepliesReceived == self.livePeersOnStart {
                 // got all the replies
-                self.logDelegate?.logString("Received StartHotPotatoMessage reply from \(peer.displayName), done, going LIVE and telling everyone")
-                snapPeerListNow() // TODO: saw a crash here once because the customData of the peer was empty. how?
-                self.state = .live
-                messageID += 1
-                assert(livePeerNames.count > 0, "ERROR")
-                let golive = StartHotPotatoMessage(remoteDevices: self.livePeersOnStart, dataVersion: self.dataVersion, ID: messageID, livePeerNames: livePeerNames)
-                sendHotPotatoMessage(message: golive, replyBlock: nil)
-                startPotatoNow()
+                self.logDelegate?.logString("Received StartHotPotatoMessage reply from \(peer.displayName), checking customData then going LIVE and telling everyone")
+                
+                let completion = {
+                    self.livePeerNames[self.bluepeer!.displayNameSanitized] = Int64(self.deviceIdentifier.hashValue)
+                    self.state = .live
+                    self.messageID += 1
+                    assert(self.livePeerNames.count > 0, "ERROR")
+                    self.logDelegate?.logString("Live peer list has been set to: \(self.livePeerNames)")
+                    let golive = StartHotPotatoMessage(remoteDevices: self.livePeersOnStart, dataVersion: self.dataVersion, ID: self.messageID, livePeerNames: self.livePeerNames)
+                    self.sendHotPotatoMessage(message: golive, replyBlock: nil)
+                    self.startPotatoNow()
+                }
+                
+                let check = { () -> Bool in 
+                    for peer in self.bluepeer!.connectedPeers() {
+                        if let peerId = peer.customData["id"] as? String {
+                            let peerIdInt = Int64(peerId)!
+                            self.livePeerNames[peer.displayName] = peerIdInt
+                        } else {
+                            self.logDelegate?.logString("WARNING, FOUND PEER WITH NO CUSTOM DATA[id]: \(peer.displayName)")
+                            return false
+                        }
+                    }
+                    self.logDelegate?.logString("All customData accounted for.")
+                    return true
+                }
+                
+                // if we received the reply before the TXT data had time to percolate, then wait until it's here
+                if check() == true {
+                    completion()
+                } else {
+                    DispatchQueue.main.asyncAfter(deadline: .now()+1.5, execute: {
+                        if check() == true {
+                            completion()
+                        } else {
+                            DispatchQueue.main.asyncAfter(deadline: .now()+1.5, execute: {
+                                if check() == true {
+                                    completion()
+                                } else {
+                                    assert(false, "ERROR still no customData")
+                                    self.stateDelegate?.showError(type: .noCustomData, title: "Try Again", message: "Please wait a moment longer after all devices are connected.")
+                                }
+                            })
+                        }
+                    })
+                }
             } else {
                 self.logDelegate?.logString("Received StartHotPotatoMessage reply from \(peer.displayName), waiting for \(self.livePeersOnStart - self.startRepliesReceived) more")
             }
