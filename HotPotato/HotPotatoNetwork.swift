@@ -20,7 +20,7 @@ public protocol HandlesPotato {
 
 public protocol HandlesStateChanges {
     func didChangeState(from: HotPotatoNetwork.State, to: HotPotatoNetwork.State)
-    func showError(alert: UIAlertController, type: HotPotatoNetwork.HPNError)
+    func showError(type: HotPotatoNetwork.HPNError, title: String, message: String)
     func thesePeersAreMissing(peerNames: [String], dropBlock: @escaping ()->Void, keepWaitingBlock: @escaping ()->Void)
 }
 
@@ -38,14 +38,14 @@ open class HotPotatoNetwork: CustomStringConvertible {
         case live
         case disconnect
     }
-    public enum HPNError: Int {
-        case versionMismatch = 1
-        case startClientCountMismatch = 2
+    public enum HPNError: Error {
+        case versionMismatch
+        case startClientCountMismatch
     }
     
     fileprivate var messageReplyQueue = [String:Queue<(HotPotatoMessage)->Void>]() // dict of message TYPE -> an queue of blocks that take a HotPotatoMessage. These are put here when people SEND data, as replyHandlers - they run max once.
     fileprivate var deviceIdentifier: String = UIDevice.current.name
-    fileprivate var livePeerNames = [String:Int64]() // name->customdata[id]. peers that were included when Start button was pressed
+    open var livePeerNames = [String:Int64]() // name->customdata[id]. peers that were included when Start button was pressed
     fileprivate var potatoLastPassedDates = [String:Date]()
     fileprivate var potato: Potato? {
         didSet {
@@ -268,7 +268,7 @@ open class HotPotatoNetwork: CustomStringConvertible {
     }
     
     fileprivate func passPotato() {
-        if state == .disconnect {
+        if state == .disconnect || self.bluepeer!.connectedPeers().count == 0 {
             self.logDelegate?.logString("NOT passing potato as state=disconnect")
             return
         }
@@ -391,12 +391,15 @@ open class HotPotatoNetwork: CustomStringConvertible {
         self.logDelegate?.logString("HPN: sendRecoverHotPotatoMessage, withLivePeers: \(withLivePeers)")
         self.livePeerNames = withLivePeers
         assert(livePeerNames.count > 0, "ERROR")
+        self.state = .live // get .live before sending out to others.
         
         // send RecoverHotPotatoMessage, with live peers
         messageID += 1
         let recover = RecoverHotPotatoMessage.init(ID: messageID, livePeerNames: withLivePeers)
-        self.handleRecoverHotPotatoMessage(message: recover, peer: nil) // get .live before sending out to others
+        
+        // don't just call handleRecoverHotPotatoMessage, as we want to ensure the recoverMessage arrives at the remote side before the actual potato does (in the case where we win the startPotato election)
         sendHotPotatoMessage(message: recover, replyBlock: nil)
+        startPotatoNow()
     }
     
     fileprivate func handleBuildGraphHotPotatoMessage(message: BuildGraphHotPotatoMessage, peer: BPPeer) {
@@ -495,10 +498,7 @@ open class HotPotatoNetwork: CustomStringConvertible {
             dateformatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ssSSSSZZZZZ"
             let remoteVersionDate = dateformatter.date(from: startHotPotatoMessage.dataVersion!)!
             let myVersionDate = dateformatter.date(from: self.dataVersion)!
-
-            let alert = UIAlertController.init(title: "Error", message: "This device has \(myVersionDate < remoteVersionDate ? "an earlier" : "a more recent") version of the data payload than \(peer.displayName).", preferredStyle: .alert)
-            alert.addAction(UIAlertAction.init(title: "OK", style: .default, handler: nil))
-            self.stateDelegate?.showError(alert: alert, type: .versionMismatch)
+            self.stateDelegate?.showError(type: .versionMismatch, title: "Error", message: "This device has \(myVersionDate < remoteVersionDate ? "an earlier" : "a more recent") version of the data payload than \(peer.displayName).")
             self.logDelegate?.logString("WARNING - data version mismatch, disconnecting \(peer.displayName)")
             peer.disconnect()
             return
@@ -507,9 +507,9 @@ open class HotPotatoNetwork: CustomStringConvertible {
         // go live message - regardless of whether i pressed start or someone else did
         if let livePeers = startHotPotatoMessage.livePeerNames {
             if let _ = livePeers[bluepeer!.displayNameSanitized] {
+                livePeerNames = livePeers
                 self.state = .live
                 self.logDelegate?.logString("Received StartHotPotatoMessage GO LIVE from \(peer.displayName), set livePeerNames to \(livePeers)")
-                livePeerNames = livePeers
                 startPotatoNow()
             } else {
                 self.logDelegate?.logString("Received StartHotPotatoMessage GO LIVE from \(peer.displayName), but I AM NOT INCLUDED IN \(livePeers), disconnecting")
@@ -523,9 +523,7 @@ open class HotPotatoNetwork: CustomStringConvertible {
             
             if startHotPotatoMessage.remoteDevices! != self.livePeersOnStart || self.livePeersOnStart != bluepeer!.connectedPeers().count {
                 self.logDelegate?.logString("WARNING - remote peer count mismatch, or my connCount has changed since start pressed")
-                let alert = UIAlertController.init(title: nil, message: "Please try again when all devices are connected to each other", preferredStyle: .alert)
-                alert.addAction(UIAlertAction.init(title: "OK", style: .default, handler: nil))
-                self.stateDelegate?.showError(alert: alert, type: .startClientCountMismatch)
+                self.stateDelegate?.showError(type: .startClientCountMismatch, title: "Try Again", message: "Please try again when all devices are connected to each other")
                 return
             }
             
@@ -533,8 +531,8 @@ open class HotPotatoNetwork: CustomStringConvertible {
             if self.startRepliesReceived == self.livePeersOnStart {
                 // got all the replies
                 self.logDelegate?.logString("Received StartHotPotatoMessage reply from \(peer.displayName), done, going LIVE and telling everyone")
+                snapPeerListNow() // TODO: saw a crash here once because the customData of the peer was empty. how?
                 self.state = .live
-                snapPeerListNow()
                 messageID += 1
                 assert(livePeerNames.count > 0, "ERROR")
                 let golive = StartHotPotatoMessage(remoteDevices: self.livePeersOnStart, dataVersion: self.dataVersion, ID: messageID, livePeerNames: livePeerNames)
@@ -656,10 +654,13 @@ public extension Date {
     // warning, english only
     func relativeTimeStringFromNow() -> String {
         let dateComponents = Calendar.current.dateComponents([.minute, .hour, .day, .weekOfYear], from: self, to: Date.init())
-        if dateComponents.weekOfYear == 0 && dateComponents.day == 0  && dateComponents.hour == 0 {
+        if dateComponents.weekOfYear! == 0 && dateComponents.day! == 0  && dateComponents.hour! == 0 {
+            if dateComponents.minute! <= 1 {
+                return "just now"
+            }
             // show minutes
             return "\(dateComponents.minute!) minute(s) ago"
-        } else if dateComponents.weekOfYear == 0 && dateComponents.day == 0 {
+        } else if dateComponents.weekOfYear! == 0 && dateComponents.day! == 0 {
             // show hours
             return "\(dateComponents.hour!) hour(s) ago"
         } else if dateComponents.weekOfYear! < 2 {
