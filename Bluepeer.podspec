@@ -9,7 +9,7 @@
 
 Pod::Spec.new do |s|
   s.name             = "Bluepeer"
-  s.version          = "1.1.0"
+  s.version          = "1.1.1"
   s.summary          = "Provides adhoc Bluetooth and wifi networking at high-level"
   s.description      = <<-DESC
 			Provides P2P (adhoc) Bluetooth and wifi networking at high-level. Uses low-level frameworks like HHServices to have more control than Multipeer and NSNetService.
@@ -36,10 +36,6 @@ Pod::Spec.new do |s|
     hpn.source_files = 'HotPotato/*.{swift,m,h}'
     hpn.dependency 'Bluepeer/Core'
     hpn.dependency 'ObjectMapper', '~> 2.2'
-  end
-
-  s.subspec 'Multipeer' do |mp|
-    mp.source_files = 'Multipeer/*.{swift,m,h}'
   end
 
   #s.public_header_files = 'Pod/Classes/*.h'
