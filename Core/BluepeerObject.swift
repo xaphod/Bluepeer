@@ -201,7 +201,7 @@ func DLog(_ items: CustomStringConvertible...) {
             fileLogDelegate = logDelegate
         }
     }
-    open var peers = [BPPeer]()
+    open var peers = [BPPeer]() // does not include self
     open var bluetoothState : BluetoothState = .unknown
     var bluetoothPeripheralManager: CBPeripheralManager!
     open var bluetoothBlock: ((_ bluetoothState: BluetoothState) -> Void)?

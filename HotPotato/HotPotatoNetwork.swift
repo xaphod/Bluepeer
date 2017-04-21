@@ -46,7 +46,8 @@ open class HotPotatoNetwork: CustomStringConvertible {
     
     fileprivate var messageReplyQueue = [String:Queue<(HotPotatoMessage)->Void>]() // dict of message TYPE -> an queue of blocks that take a HotPotatoMessage. These are put here when people SEND data, as replyHandlers - they run max once.
     fileprivate var deviceIdentifier: String = UIDevice.current.name
-    open var livePeerNames = [String:Int64]() // name->customdata[id]. peers that were included when Start button was pressed
+    open var livePeerNames = [String:Int64]() // name->customdata[id]. peers that were included when Start button was pressed. Includes self, unlike bluepeer.peers which does not!
+    fileprivate var livePeerStatus = [String:Bool]() // name->true meaning is active (not paused)
     fileprivate var potatoLastPassedDates = [String:Date]()
     fileprivate var potato: Potato? {
         didSet {
@@ -54,6 +55,7 @@ open class HotPotatoNetwork: CustomStringConvertible {
         }
     }
     fileprivate var potatoLastSeen: Date = Date.init(timeIntervalSince1970: 0)
+    fileprivate let payloadHeader = "[:!Payload Header Start!:]".data(using: .utf8)!
     fileprivate var potatoTimer: Timer?
     fileprivate var potatoTimerSeconds: TimeInterval!
     fileprivate var networkName: String!
@@ -105,11 +107,21 @@ open class HotPotatoNetwork: CustomStringConvertible {
     // RECEIVING A POTATO -> PAYLOAD
     fileprivate var pendingPotatoHotPotatoMessage: PotatoHotPotatoMessage? // if not nil, then the next received data is the potato's data payload
     
+    // TELLING PEERS TO PAUSE ME WHEN I GO TO BACKGROUND. I send a PauseMeMessage, wait for responses from connected peers, then end bgTask
+    fileprivate var backgroundTask = UIBackgroundTaskInvalid // if not UIBackgroundTaskInvalid, then we backgrounded a live session
+    fileprivate var pauseMeMessageID = 0
+    fileprivate var pauseMeMessageNumExpectedResponses = 0
+    fileprivate var pauseMeMessageResponsesSeen = 0
+    fileprivate var onConnectUnpauseBlock: (()->Bool)?
+    
+    
     // all peers in this network must use the same name and version to connect and start. timeout is the amount of time the potato must be seen within, until it is considered a disconnect
     required public init(networkName: String, dataVersion: Date, timeout: TimeInterval? = 15.0) {
         self.networkName = networkName
         self.dataVersion = DateFormatter.ISO8601DateFormatter().string(from: dataVersion)
         self.potatoTimerSeconds = timeout
+        NotificationCenter.default.addObserver(self, selector: #selector(didEnterBackground), name: Notification.Name.UIApplicationDidEnterBackground, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(willEnterForeground), name: Notification.Name.UIApplicationWillEnterForeground, object: nil)
     }
     
     // removes me from the network, doesn't stop others from continuing in the network
@@ -128,7 +140,7 @@ open class HotPotatoNetwork: CustomStringConvertible {
         if bluepeerServiceName.characters.count > 15 {
             bluepeerServiceName = bluepeerServiceName.substring(to: bluepeerServiceName.index(bluepeerServiceName.startIndex, offsetBy:14))
         }
-        print("HPN: startConnecting, Bluepeer service name: \(bluepeerServiceName), device: \(self.deviceIdentifier) / \(self.deviceIdentifier.hashValue)")
+        self.logDelegate?.logString("HPN: startConnecting, Bluepeer service name: \(bluepeerServiceName), device: \(self.deviceIdentifier) / \(self.deviceIdentifier.hashValue)")
         self.bluepeer = BluepeerObject.init(serviceType: bluepeerServiceName, displayName: deviceIdentifier, queue: nil, serverPort: XaphodUtils.getFreeTCPPort(), interfaces: .infrastructureModeWifiOnly, bluetoothBlock: nil)!
         if let logDel = self.logDelegate {
             self.bluepeer?.logDelegate = logDel
@@ -141,12 +153,57 @@ open class HotPotatoNetwork: CustomStringConvertible {
         self.bluepeer!.startAdvertising(.any, customData: ["id":String(self.deviceIdentifier.hashValue)])
     }
     
-    fileprivate func emptyPeerListNow() {
-        livePeerNames = [String:Int64]()
-    }
-    
     open var description: String {
         return self.bluepeer?.description ?? "Bluepeer not initialized"
+    }
+    
+    // per Apple: "Your implementation of this method has approximately five seconds to perform any tasks and return. If you need additional time to perform any final tasks, you can request additional execution time from the system by calling beginBackgroundTask(expirationHandler:)"
+    @objc fileprivate func didEnterBackground() {
+        guard self.state != .buildup, let bluepeer = self.bluepeer else { return }
+        self.logDelegate?.logString("HPN: didEnterBackground() with live session, sending PauseMeMessage")
+        if let timer = self.potatoTimer {
+            timer.invalidate()
+            self.potatoTimer = nil
+        }
+
+        self.backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "HotPotatoNetwork") {
+            self.logDelegate?.logString("HPN WARNING: backgroundTask expirationHandler() called! We're not fast enough..?")
+            assert(false, "ERROR")
+        }
+        
+        messageID += 1
+        pauseMeMessageID = messageID
+        pauseMeMessageResponsesSeen = 0
+        pauseMeMessageNumExpectedResponses = bluepeer.connectedPeers().count
+        let message = PauseMeMessage.init(ID: pauseMeMessageID, isPause: true)
+        self.sendHotPotatoMessage(message: message, replyBlock: nil)
+    }
+    
+    @objc fileprivate func willEnterForeground() {
+        guard self.backgroundTask != UIBackgroundTaskInvalid, self.state != .buildup, let _ = self.bluepeer else { return }
+        self.logDelegate?.logString("HPN: willEnterForeground() with backgrounded live session, recovery expected. Restarting potato timer, and sending UNPAUSE PauseMeMessage...")
+        self.backgroundTask = UIBackgroundTaskInvalid
+        self.restartPotatoTimer()
+        let connectedPeersToWaitFor = self.pauseMeMessageResponsesSeen
+        self.pauseMeMessageNumExpectedResponses = 0
+        self.pauseMeMessageResponsesSeen = 0
+
+        messageID += 1
+        // TODO: got here, it seems unpause messages are never received.
+        if self.bluepeer!.connectedPeers().count >= connectedPeersToWaitFor {
+            self.logDelegate?.logString("HPN: unpausing immediately because all are connected")
+            self.sendHotPotatoMessage(message: PauseMeMessage.init(ID: messageID, isPause: false), replyBlock: nil)
+        } else {
+            self.logDelegate?.logString("HPN: can't unpause yet, waiting for connections...")
+            self.onConnectUnpauseBlock = {
+                if self.bluepeer!.connectedPeers().count >= connectedPeersToWaitFor {
+                    self.logDelegate?.logString("HPN: all connections back, unpausing (PuaseMeNow message)")
+                    self.sendHotPotatoMessage(message: PauseMeMessage.init(ID: self.messageID, isPause: false), replyBlock: nil)
+                    return true
+                }
+                return false
+            }
+        }
     }
     
     // MARK:
@@ -162,7 +219,9 @@ open class HotPotatoNetwork: CustomStringConvertible {
             self.prepReplyQueueWith(replyBlock: replyBlock, message: message)
             try self.bluepeer!.sendData([data], toRole: .any)
             if let message = message as? PotatoHotPotatoMessage, let payload = message.potato?.payload {
-                try self.bluepeer!.sendData([payload], toRole: .any)
+                var headeredPayload = payloadHeader
+                headeredPayload.append(payload)
+                try self.bluepeer!.sendData([headeredPayload], toRole: .any)
             }
         } catch {
             assert(false, "ERROR got error on sendData: \(error)")
@@ -178,7 +237,9 @@ open class HotPotatoNetwork: CustomStringConvertible {
             self.prepReplyQueueWith(replyBlock: replyBlock, message: message)
             try self.bluepeer!.sendData([data], toPeers: [toPeer])
             if let message = message as? PotatoHotPotatoMessage, let payload = message.potato?.payload {
-                try self.bluepeer!.sendData([payload], toPeers: [toPeer])
+                var headeredPayload = payloadHeader
+                headeredPayload.append(payload)
+                try self.bluepeer!.sendData([headeredPayload], toPeers: [toPeer])
             }
         } catch {
             assert(false, "ERROR got error on sendData: \(error)")
@@ -245,6 +306,14 @@ open class HotPotatoNetwork: CustomStringConvertible {
         potatoLastPassedDates.removeValue(forKey: self.bluepeer!.displayNameSanitized)
         // highest hash of peernames wins
         let winner: (String, Int64) = livePeerNames.reduce(("",Int64.min)) { (result, element) -> (String,Int64) in
+            guard let status = self.livePeerStatus[element.key] else {
+                assert(false, "no status ERROR")
+                return result
+            }
+            if status == false {
+                // element is a paused peer, can't win
+                return result
+            }
             return element.value >= result.1 ? element : result
         }
         if self.bluepeer!.displayNameSanitized == winner.0 {
@@ -253,6 +322,10 @@ open class HotPotatoNetwork: CustomStringConvertible {
             self.potato = Potato.init(payload: payload, visits: [firstVisit])
             self.passPotato()
         } else {
+            if winner.0 == "" {
+                // TODO: go to single mode, just myself, until someone else comes back?
+                assert(false, "ERROR no winner")
+            }
             self.logDelegate?.logString("startPotatoNow: I didn't win, \(winner) did")
             self.restartPotatoTimer()
         }
@@ -266,26 +339,30 @@ open class HotPotatoNetwork: CustomStringConvertible {
         
         let oldestPeer: (String,Date) = self.potatoLastPassedDates.reduce(("", Date.distantFuture)) { (result, element) -> (String, Date) in
             let peers = self.bluepeer!.peers.filter({ $0.displayName == element.0 })
-            if peers.count != 1 {
+            guard peers.count == 1 else {
                 assert(false, "ERROR: no peer found")
                 return result
             }
             let peer = peers.first!
-            if peer.state != .authenticated {
+            guard peer.state == .authenticated else {
                 self.logDelegate?.logString("passPotato: \(peer.displayName) not connected, not passing to them...")
+                return result
+            }
+            guard let status = livePeerStatus[element.0], status == true else {
+                self.logDelegate?.logString("passPotato: \(peer.displayName) is paused, not passing to them...")
                 return result
             }
             return result.1 < element.1 ? result : element
         }
         
         if oldestPeer.0 == "" {
+            // TODO: move to single mode? this is the 2nd spot ...
             self.logDelegate?.logString("potatoPassBlock: FOUND NO PEER TO PASS TO, TRYING AGAIN IN 2 SECONDS")
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: {
                 self.passPotato()
             })
             return
         }
-        
         self.logDelegate?.logString("potatoPassBlock: passing to \(oldestPeer.0)")
         
         // update meta: passedDates, potato.visits
@@ -312,6 +389,8 @@ open class HotPotatoNetwork: CustomStringConvertible {
     }
     
     fileprivate func restartPotatoTimer() {
+        guard self.backgroundTask == UIBackgroundTaskInvalid else { return } // don't reschedule the timer when we're in the background
+        
         if let timer = self.potatoTimer {
             timer.invalidate()
             self.potatoTimer = nil
@@ -342,6 +421,12 @@ open class HotPotatoNetwork: CustomStringConvertible {
         
         // if we're disconnected, then consider this a reconnection
         self.state = .live
+        
+        guard self.backgroundTask == UIBackgroundTaskInvalid else {
+            self.logDelegate?.logString("HPN: WARNING, got potato in background, passing it off quickly...")
+            self.passPotato()
+            return
+        }
         
         self.potatoDelegate?.youHaveThePotato(potato: self.potato!, finishBlock: { (potato) in
             self.potato = potato
@@ -456,6 +541,28 @@ open class HotPotatoNetwork: CustomStringConvertible {
         startPotatoNow()
     }
     
+    fileprivate func handlePauseMeMessage(message: PauseMeMessage, peer: BPPeer?) {
+        if message.ID! == pauseMeMessageID {
+            // it's a reply to mine. 
+            if message.isPause == true {
+                // I'm pausing. Once i've seen enough responses, I just end my bgTask.
+                pauseMeMessageResponsesSeen += 1
+                if pauseMeMessageResponsesSeen >= pauseMeMessageNumExpectedResponses {
+                    self.logDelegate?.logString("handlePauseMeMessage: got all responses, ending BGTask")
+                    UIApplication.shared.endBackgroundTask(backgroundTask)
+                    // don't set backgroundTask to invalid, as we want potatoes to get handed off without processing until we foreground
+                } else {
+                    self.logDelegate?.logString("handlePauseMeMessage: \(pauseMeMessageResponsesSeen) responses out of \(pauseMeMessageNumExpectedResponses)")
+                }
+            } // else: I'm unpausing. No-op
+        } else {
+            // it's from someone else
+            self.livePeerStatus[peer!.displayName] = !message.isPause!
+            self.logDelegate?.logString("handlePauseMeMessage: HPN SERVICE TO \(peer!.displayName) IS \(message.isPause! ? "PAUSED" : "RESUMED")")
+            self.sendHotPotatoMessage(message: message, toPeer: peer!, replyBlock: nil) // send reply as acknowledgement
+        }
+    }
+    
     // MARK:
     // MARK: STARTING
     // MARK:
@@ -499,6 +606,9 @@ open class HotPotatoNetwork: CustomStringConvertible {
         if let livePeers = startHotPotatoMessage.livePeerNames {
             if let _ = livePeers[bluepeer!.displayNameSanitized] {
                 livePeerNames = livePeers
+                for peer in livePeers {
+                    self.livePeerStatus[peer.key] = true // active
+                }
                 self.state = .live
                 self.logDelegate?.logString("Received StartHotPotatoMessage GO LIVE from \(peer.displayName), set livePeerNames to \(livePeers)")
                 startPotatoNow()
@@ -524,7 +634,8 @@ open class HotPotatoNetwork: CustomStringConvertible {
                 self.logDelegate?.logString("Received StartHotPotatoMessage reply from \(peer.displayName), checking customData then going LIVE and telling everyone")
                 
                 let completion = {
-                    self.livePeerNames[self.bluepeer!.displayNameSanitized] = Int64(self.deviceIdentifier.hashValue)
+                    self.livePeerNames[self.bluepeer!.displayNameSanitized] = Int64(self.deviceIdentifier.hashValue) // add self. 
+                    self.livePeerStatus[self.bluepeer!.displayNameSanitized] = true // i'm active
                     self.state = .live
                     self.messageID += 1
                     assert(self.livePeerNames.count > 0, "ERROR")
@@ -539,6 +650,7 @@ open class HotPotatoNetwork: CustomStringConvertible {
                         if let peerId = peer.customData["id"] as? String {
                             let peerIdInt = Int64(peerId)!
                             self.livePeerNames[peer.displayName] = peerIdInt
+                            self.livePeerStatus[peer.displayName] = true // active
                         } else {
                             self.logDelegate?.logString("WARNING, FOUND PEER WITH NO CUSTOM DATA[id]: \(peer.displayName)")
                             return false
@@ -607,6 +719,13 @@ extension HotPotatoNetwork : BluepeerMembershipRosterDelegate {
     }
     
     public func peerDidConnect(_ peerRole: RoleType, peer: BPPeer) {
+        // unpausing PauseMeNow when all peers connected
+        if let block = self.onConnectUnpauseBlock {
+            if block() {
+                self.onConnectUnpauseBlock = nil
+            }
+        }
+        
         self.rosterDelegate?.peerDidConnect?(peerRole, peer: peer)
 
         if state == .disconnect {
@@ -625,13 +744,18 @@ extension HotPotatoNetwork : BluepeerMembershipRosterDelegate {
 
 extension HotPotatoNetwork : BluepeerDataDelegate {
     public func didReceiveData(_ data: Data, fromPeer peer: BPPeer) {
-        if let pendingPotatoHotPotatoMessage = self.pendingPotatoHotPotatoMessage {
-            // then this data is part of the potato message
-            self.logDelegate?.logString("Received potato PAYLOAD")
-            pendingPotatoHotPotatoMessage.potato!.payload = data
-            self.pendingPotatoHotPotatoMessage = nil
-            self.handlePotatoHotPotatoMessage(pendingPotatoHotPotatoMessage, peer: peer)
-            return
+        
+        if data.count > self.payloadHeader.count {
+            let mightBePayloadHeader = data.subdata(in: 0..<self.payloadHeader.count)
+            if mightBePayloadHeader == payloadHeader, let pendingPotatoHotPotatoMessage = self.pendingPotatoHotPotatoMessage {
+                let dataWithoutHeader = data.subdata(in: self.payloadHeader.count..<data.count)
+                // then this data is part of the potato message
+                self.logDelegate?.logString("Received potato PAYLOAD")
+                pendingPotatoHotPotatoMessage.potato!.payload = dataWithoutHeader
+                self.pendingPotatoHotPotatoMessage = nil
+                self.handlePotatoHotPotatoMessage(pendingPotatoHotPotatoMessage, peer: peer)
+                return
+            }
         }
         
         guard let stringReceived = String(data: data, encoding: .utf8),
@@ -655,6 +779,9 @@ extension HotPotatoNetwork : BluepeerDataDelegate {
             return
         } else if let recovermessage = message as? RecoverHotPotatoMessage {
             self.handleRecoverHotPotatoMessage(message: recovermessage, peer: peer)
+            return
+        } else if let pausemessage = message as? PauseMeMessage {
+            self.handlePauseMeMessage(message: pausemessage, peer: peer)
             return
         }
         

@@ -29,6 +29,8 @@ open class HotPotatoMessage : StaticMappable {
             return BuildGraphHotPotatoMessage()
         case "RecoverHotPotatoMessage":
             return RecoverHotPotatoMessage()
+        case "PauseMeMessage":
+            return PauseMeMessage()
         default:
             assert(false, "ERROR")
             return nil
@@ -137,6 +139,25 @@ open class RecoverHotPotatoMessage : HotPotatoMessage {
         super.mapping(map: map)
         ID <- map["ID"]
         livePeerNames <- map["livePeerNames"]
+    }
+}
+
+open class PauseMeMessage : HotPotatoMessage {
+    var ID: Int? // to map answers to requests
+    var isPause: Bool? // when false, is unpause
+    override init() {
+        super.init()
+    }
+    convenience init(ID: Int, isPause: Bool) {
+        self.init()
+        self.ID = ID
+        self.isPause = isPause
+    }
+    
+    override open func mapping(map: Map) {
+        super.mapping(map: map)
+        ID <- map["ID"]
+        isPause <- map["isPause"]
     }
 }
 
