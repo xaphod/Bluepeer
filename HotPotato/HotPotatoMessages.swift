@@ -145,19 +145,22 @@ open class RecoverHotPotatoMessage : HotPotatoMessage {
 open class PauseMeMessage : HotPotatoMessage {
     var ID: Int? // to map answers to requests
     var isPause: Bool? // when false, is unpause
+    var livePeerNames: [String:Int64]? // on a response to unpause, this contains the responder's live peer list -- in case it changed while the sender was backgrounded/out
     override init() {
         super.init()
     }
-    convenience init(ID: Int, isPause: Bool) {
+    convenience init(ID: Int, isPause: Bool, livePeerNames: [String:Int64]?) {
         self.init()
         self.ID = ID
         self.isPause = isPause
+        self.livePeerNames = livePeerNames
     }
     
     override open func mapping(map: Map) {
         super.mapping(map: map)
         ID <- map["ID"]
         isPause <- map["isPause"]
+        livePeerNames <- map["livePeerNames"]
     }
 }
 
