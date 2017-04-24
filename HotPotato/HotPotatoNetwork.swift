@@ -22,12 +22,12 @@ public protocol HandlesStateChanges {
     func didChangeState(from: HotPotatoNetwork.State, to: HotPotatoNetwork.State)
     func showError(type: HotPotatoNetwork.HPNError, title: String, message: String)
     func thesePeersAreMissing(peerNames: [String], dropBlock: @escaping ()->Void, keepWaitingBlock: @escaping ()->Void)
+    func didChangeRoster()
 }
 
 open class HotPotatoNetwork: CustomStringConvertible {
     
     open var bluepeer: BluepeerObject?
-    open var rosterDelegate: BluepeerMembershipRosterDelegate?
     open var logDelegate: BluepeerLoggingDelegate?
     open var messageHandlers = [String:HandlesHotPotatoMessages]() // dict of message TYPE -> HotPotatoMessageHandler (one per message.type)
     open var potatoDelegate: HandlesPotato?
@@ -639,6 +639,7 @@ open class HotPotatoNetwork: CustomStringConvertible {
 
                 self.livePeerNames = message.livePeerNames!
                 self.logDelegate?.logString("handlePauseMeMessage: unpause response received, updated livePeerNames")
+                self.stateDelegate?.didChangeRoster() // in case there were comings/goings while we were asleep
             }
         } else {
             // it's from someone else: let's respond
@@ -817,16 +818,14 @@ extension HotPotatoNetwork : BluepeerMembershipRosterDelegate {
                 self.onConnectUnpauseBlock = nil
             }
         }
-        
-        self.rosterDelegate?.peerDidConnect?(peerRole, peer: peer)
-
         if state == .disconnect {
             self.sendBuildGraphHotPotatoMessage()
         }
+        self.stateDelegate?.didChangeRoster()
     }
     
     public func peerDidDisconnect(_ peerRole: RoleType, peer: BPPeer, canConnectNow: Bool) {
-        self.rosterDelegate?.peerDidDisconnect?(peerRole, peer: peer, canConnectNow: canConnectNow)
+        self.stateDelegate?.didChangeRoster()
         if canConnectNow {
             self.logDelegate?.logString("HPN: peerDidDisconnect, canConnectNow - reconnecting...")
             self.connectToPeer(peer)
