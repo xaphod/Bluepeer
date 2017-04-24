@@ -113,6 +113,7 @@ open class HotPotatoNetwork: CustomStringConvertible {
     fileprivate var pauseMeMessageNumExpectedResponses = 0
     fileprivate var pauseMeMessageResponsesSeen = 0
     fileprivate var onConnectUnpauseBlock: (()->Bool)?
+    fileprivate var didSeeWillEnterForeground = false
     
     
     // all peers in this network must use the same name and version to connect and start. timeout is the amount of time the potato must be seen within, until it is considered a disconnect
@@ -122,6 +123,11 @@ open class HotPotatoNetwork: CustomStringConvertible {
         self.potatoTimerSeconds = timeout
         NotificationCenter.default.addObserver(self, selector: #selector(didEnterBackground), name: Notification.Name.UIApplicationDidEnterBackground, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(willEnterForeground), name: Notification.Name.UIApplicationWillEnterForeground, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(didBecomeActive), name: Notification.Name.UIApplicationDidBecomeActive, object: nil)
+    }
+    
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
     
     // removes me from the network, doesn't stop others from continuing in the network
@@ -181,23 +187,30 @@ open class HotPotatoNetwork: CustomStringConvertible {
     
     @objc fileprivate func willEnterForeground() {
         guard self.backgroundTask != UIBackgroundTaskInvalid, self.state != .buildup, let _ = self.bluepeer else { return }
-        self.logDelegate?.logString("HPN: willEnterForeground() with backgrounded live session, recovery expected. Restarting potato timer, and sending UNPAUSE PauseMeMessage...")
         self.backgroundTask = UIBackgroundTaskInvalid
+        self.didSeeWillEnterForeground = true
+    }
+    
+    @objc fileprivate func didBecomeActive() {
+        guard self.didSeeWillEnterForeground == true else { return }
+        self.didSeeWillEnterForeground = false
+        self.logDelegate?.logString("HPN: didBecomeActive() with backgrounded live session, recovery expected. Restarting potato timer, and sending UNPAUSE PauseMeMessage...")
         self.restartPotatoTimer()
         let connectedPeersToWaitFor = self.pauseMeMessageResponsesSeen
         self.pauseMeMessageNumExpectedResponses = 0
         self.pauseMeMessageResponsesSeen = 0
 
         messageID += 1
-        // TODO: got here, it seems unpause messages are never received.
         if self.bluepeer!.connectedPeers().count >= connectedPeersToWaitFor {
             self.logDelegate?.logString("HPN: unpausing immediately because all are connected")
+            self.pauseMeMessageID = messageID
             self.sendHotPotatoMessage(message: PauseMeMessage.init(ID: messageID, isPause: false), replyBlock: nil)
         } else {
             self.logDelegate?.logString("HPN: can't unpause yet, waiting for connections...")
             self.onConnectUnpauseBlock = {
                 if self.bluepeer!.connectedPeers().count >= connectedPeersToWaitFor {
                     self.logDelegate?.logString("HPN: all connections back, unpausing (PuaseMeNow message)")
+                    self.pauseMeMessageID = self.messageID
                     self.sendHotPotatoMessage(message: PauseMeMessage.init(ID: self.messageID, isPause: false), replyBlock: nil)
                     return true
                 }
