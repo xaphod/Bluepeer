@@ -22,7 +22,7 @@ public protocol HandlesStateChanges {
     func didChangeState(from: HotPotatoNetwork.State, to: HotPotatoNetwork.State)
     func showError(type: HotPotatoNetwork.HPNError, title: String, message: String)
     func thesePeersAreMissing(peerNames: [String], dropBlock: @escaping ()->Void, keepWaitingBlock: @escaping ()->Void)
-    func didChangeRoster()
+    func didChangeRoster() // call activePeerNamesIncludingSelf() to get roster
 }
 
 open class HotPotatoNetwork: CustomStringConvertible {
@@ -154,13 +154,13 @@ open class HotPotatoNetwork: CustomStringConvertible {
         self.bluepeer!.disconnectSession()
     }
     
-    open func startLookingForPotatoPeers() {
+    open func startLookingForPotatoPeers(interfaces: BluepeerInterfaces) {
         var bluepeerServiceName = self.networkName!
         if bluepeerServiceName.characters.count > 15 {
             bluepeerServiceName = bluepeerServiceName.substring(to: bluepeerServiceName.index(bluepeerServiceName.startIndex, offsetBy:14))
         }
         self.logDelegate?.logString("HPN: startConnecting, Bluepeer service name: \(bluepeerServiceName), device: \(self.deviceIdentifier) / \(self.deviceIdentifier.hashValue)")
-        self.bluepeer = BluepeerObject.init(serviceType: bluepeerServiceName, displayName: deviceIdentifier, queue: nil, serverPort: XaphodUtils.getFreeTCPPort(), interfaces: .infrastructureModeWifiOnly, bluetoothBlock: nil)!
+        self.bluepeer = BluepeerObject.init(serviceType: bluepeerServiceName, displayName: deviceIdentifier, queue: nil, serverPort: XaphodUtils.getFreeTCPPort(), interfaces: interfaces, bluetoothBlock: nil)!
         if let logDel = self.logDelegate {
             self.bluepeer?.logDelegate = logDel
         }
@@ -232,6 +232,22 @@ open class HotPotatoNetwork: CustomStringConvertible {
                 return true
             }
         }
+    }
+    
+    open func activePeerNamesIncludingSelf() -> [String] {
+        let peers = self.bluepeer!.connectedPeers().filter {
+            if let status = self.livePeerStatus[$0.displayName] {
+                if let _ = self.livePeerNames[$0.displayName] {
+                    return status == true
+                }
+            } else {
+                assert(false, "ERROR")
+            }
+            return false
+        }
+        var retval = peers.map({ return $0.displayName })
+        retval.append(self.bluepeer!.displayNameSanitized)
+        return retval
     }
     
     // MARK:
@@ -370,8 +386,7 @@ open class HotPotatoNetwork: CustomStringConvertible {
         let oldestPeer: (String,Date) = self.potatoLastPassedDates.reduce(("", Date.distantFuture)) { (result, element) -> (String, Date) in
             let peers = self.bluepeer!.peers.filter({ $0.displayName == element.0 })
             guard peers.count == 1 else {
-                assert(false, "ERROR: no peer found")
-                return result
+                return result // this can happen during reconnect, because dupe peer is being removed just at the moment this gets hit
             }
             let peer = peers.first!
             guard peer.state == .authenticated else {
@@ -458,7 +473,11 @@ open class HotPotatoNetwork: CustomStringConvertible {
         self.potatoLastPassedDates[peer.displayName] = Date.init()
 
         if self.potato!.sentFromBackground == false {
+            let oldVal = self.livePeerStatus[peer.displayName]
             self.livePeerStatus[peer.displayName] = true
+            if oldVal == false {
+                self.stateDelegate?.didChangeRoster()
+            }
         }
         
         // if we're disconnected, then consider this a reconnection
@@ -654,6 +673,7 @@ open class HotPotatoNetwork: CustomStringConvertible {
             }
             self.logDelegate?.logString("handlePauseMeMessage: HPN SERVICE TO \(peer!.displayName) IS \(message.isPause! ? "PAUSED" : "RESUMED")")
             self.sendHotPotatoMessage(message: message, toPeer: peer!, replyBlock: nil) // send reply as acknowledgement
+            self.stateDelegate?.didChangeRoster()
         }
     }
     
