@@ -29,6 +29,8 @@ open class HotPotatoMessage : StaticMappable {
             return BuildGraphHotPotatoMessage()
         case "RecoverHotPotatoMessage":
             return RecoverHotPotatoMessage()
+        case "PauseMeMessage":
+            return PauseMeMessage()
         default:
             assert(false, "ERROR")
             return nil
@@ -60,6 +62,7 @@ open class StartHotPotatoMessage : HotPotatoMessage {
     var dataVersion: String? // ISO 8601 date format
     var ID: Int? // to map answers to requests
     var livePeerNames: [String:Int64]?
+    var versionMismatchDetected = false
     
     override init() {
         super.init()
@@ -79,6 +82,7 @@ open class StartHotPotatoMessage : HotPotatoMessage {
         dataVersion <- map["dataVersion"]
         ID <- map["ID"]
         livePeerNames <- map["livePeerNames"]
+        versionMismatchDetected <- map["versionMismatchDetected"]
     }
 }
 
@@ -136,6 +140,28 @@ open class RecoverHotPotatoMessage : HotPotatoMessage {
     override open func mapping(map: Map) {
         super.mapping(map: map)
         ID <- map["ID"]
+        livePeerNames <- map["livePeerNames"]
+    }
+}
+
+open class PauseMeMessage : HotPotatoMessage {
+    var ID: Int? // to map answers to requests
+    var isPause: Bool? // when false, is unpause
+    var livePeerNames: [String:Int64]? // on a response to unpause, this contains the responder's live peer list -- in case it changed while the sender was backgrounded/out
+    override init() {
+        super.init()
+    }
+    convenience init(ID: Int, isPause: Bool, livePeerNames: [String:Int64]?) {
+        self.init()
+        self.ID = ID
+        self.isPause = isPause
+        self.livePeerNames = livePeerNames
+    }
+    
+    override open func mapping(map: Map) {
+        super.mapping(map: map)
+        ID <- map["ID"]
+        isPause <- map["isPause"]
         livePeerNames <- map["livePeerNames"]
     }
 }

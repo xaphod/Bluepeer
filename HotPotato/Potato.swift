@@ -12,6 +12,7 @@ let MaxPotatoVisitLength = 10
 public struct Potato {
     public var payload: Data? // Does NOT map
     public var visits: [PotatoVisit]?
+    public var sentFromBackground = false
 }
 
 extension Potato : Mappable {
@@ -24,5 +25,6 @@ extension Potato : Mappable {
     
     mutating public func mapping(map: Map) {
         visits <- map["visits"]
+        sentFromBackground <- map["sentFromBackground"]
     }
 }
