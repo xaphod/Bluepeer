@@ -240,8 +240,6 @@ open class HotPotatoNetwork: CustomStringConvertible {
                 if let _ = self.livePeerNames[$0.displayName] {
                     return status == true
                 }
-            } else {
-                assert(false, "ERROR")
             }
             return false
         }
@@ -712,6 +710,14 @@ open class HotPotatoNetwork: CustomStringConvertible {
             let myVersionDate = dateformatter.date(from: self.dataVersion)!
             self.stateDelegate?.showError(type: .versionMismatch, title: "Error", message: "This device has \(myVersionDate < remoteVersionDate ? "an earlier" : "a more recent") version of the data payload than \(peer.displayName).")
             self.logDelegate?.logString("WARNING - data version mismatch, disconnecting \(peer.displayName)")
+            
+            if startHotPotatoMessage.versionMismatchDetected == false {
+                // so that the other side can detect mismatch also
+                let returnMessage = startHotPotatoMessage
+                returnMessage.dataVersion = self.dataVersion
+                returnMessage.versionMismatchDetected = true
+                self.sendHotPotatoMessage(message: returnMessage, toPeer: peer, replyBlock: nil)
+            }
             peer.disconnect()
             return
         }

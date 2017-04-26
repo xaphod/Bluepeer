@@ -62,6 +62,7 @@ open class StartHotPotatoMessage : HotPotatoMessage {
     var dataVersion: String? // ISO 8601 date format
     var ID: Int? // to map answers to requests
     var livePeerNames: [String:Int64]?
+    var versionMismatchDetected = false
     
     override init() {
         super.init()
@@ -81,6 +82,7 @@ open class StartHotPotatoMessage : HotPotatoMessage {
         dataVersion <- map["dataVersion"]
         ID <- map["ID"]
         livePeerNames <- map["livePeerNames"]
+        versionMismatchDetected <- map["versionMismatchDetected"]
     }
 }
 
