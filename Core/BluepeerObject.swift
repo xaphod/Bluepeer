@@ -128,7 +128,7 @@ public enum BPPeerState: Int, CustomStringConvertible {
 
 @objc public protocol BluepeerMembershipAdminDelegate {
     @objc optional func peerConnectionRequest(_ peer: BPPeer, invitationHandler: @escaping (Bool) -> Void) // was named: sessionConnectionRequest
-    @objc optional func browserFoundPeer(_ role: RoleType, peer: BPPeer) // peer has connect() that can be executed, and your .customData too
+    @objc optional func browserFoundPeer(_ role: RoleType, peer: BPPeer) // peer has connect() that can be executed, and your .customData too. Can be called more than once for the same peer.
     @objc optional func browserLostPeer(_ role: RoleType, peer: BPPeer)
 }
 
@@ -226,7 +226,7 @@ func DLog(_ items: CustomStringConvertible...) {
     }
     
     // if queue isn't given, main queue is used
-    public init?(serviceType: String, displayName:String?, queue:DispatchQueue?, serverPort: UInt16, interfaces: BluepeerInterfaces?, bluetoothBlock: ((_ bluetoothState: BluetoothState)->Void)?) {
+    public init?(serviceType: String, displayName:String?, queue:DispatchQueue?, serverPort: UInt16, interfaces: BluepeerInterfaces, bluetoothBlock: ((_ bluetoothState: BluetoothState)->Void)?) {
         
         super.init()
         
@@ -239,9 +239,7 @@ func DLog(_ items: CustomStringConvertible...) {
         
         self.serverPort = serverPort
         self.delegateQueue = queue
-        if let interfaces = interfaces {
-            self.bluepeerInterfaces = interfaces
-        }
+        self.bluepeerInterfaces = interfaces
         
         var name = UIDevice.current.name
         if let displayName = displayName {
@@ -390,7 +388,6 @@ func DLog(_ items: CustomStringConvertible...) {
         DLog("starting advertising using port \(serverPort)")
 
         // type must be like: _myexampleservice._tcp  (no trailing .)
-        // txtData: let's use this for RoleType. For now just shove RoleType in there!
         // txtData, from http://www.zeroconf.org/rendezvous/txtrecords.html: Using TXT records larger than 1300 bytes is NOT RECOMMENDED at this time. The format of the data within a DNS TXT record is zero or more strings, packed together in memory without any intervening gaps or padding bytes for word alignment. The format of each constituent string within the DNS TXT record is a single length byte, followed by 0-255 bytes of text data.
     
         // Could use the NSNetService version of this (TXTDATA maker), it'd be easier :)
@@ -657,22 +654,6 @@ func DLog(_ items: CustomStringConvertible...) {
         }
         return UIStoryboard.init(name: "Bluepeer", bundle: Bundle.init(path: bundlePath))
     }
-    
-    func announcePeer(peer: BPPeer) {
-        guard let delegate = self.membershipAdminDelegate else {
-            DLog("announcePeer: WARNING, no-op because membershipAdminDelegate is not set")
-            return
-        }
-
-        if self.appIsInBackground == false {
-            DLog("announcePeer: announcing now with browserFoundPeer - call peer.connect() to connect")
-            self.dispatch_on_delegate_queue({
-                delegate.browserFoundPeer?(peer.role, peer: peer)
-            })
-        } else {
-            DLog("announcePeer: app is in BACKGROUND, no-op!")
-        }
-    }
 }
 
 extension GCDAsyncSocket {
@@ -916,10 +897,6 @@ extension BluepeerObject : HHServiceDelegate {
                 DLog("connect: \(peer.displayName) has \(peer.services.count) svcs (\(peer.resolvedServices().count) resolved); picked service has \(hhaddresses.count) addresses, chose \(chosenAddress.addressAndPortString) on interface \(chosenAddress.interfaceName)")
                 let sockdata = chosenAddress.socketAsData()
                 
-                // TODO: when migrating Wifibooth, blueprint: make sure browserFoundPeer calls stopBrowsing()!
-                // 1.1: don't stop browsing automatically, delegate must do that now
-                //                    self.stopBrowsing() // stop browsing once user has done something. Destroys all HHService except this one!
-                
                 if let oldSocket = peer.socket {
                     DLog("**** connect: PEER ALREADY HAD SOCKET, DESTROYING...")
                     oldSocket.synchronouslySetDelegate(nil)
@@ -938,7 +915,19 @@ extension BluepeerObject : HHServiceDelegate {
             }
         }
         
-        self.announcePeer(peer: peer)
+        guard let delegate = self.membershipAdminDelegate else {
+            DLog("announcePeer: WARNING, no-op because membershipAdminDelegate is not set")
+            return
+        }
+        
+        if self.appIsInBackground == false {
+            DLog("announcePeer: announcing now with browserFoundPeer - call peer.connect() to connect")
+            self.dispatch_on_delegate_queue({
+                delegate.browserFoundPeer?(peer.role, peer: peer)
+            })
+        } else {
+            DLog("announcePeer: app is in BACKGROUND, no-op!")
+        }
     }
     
     public func serviceDidNotResolve(_ service: HHService) {
@@ -1026,7 +1015,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             // CONVENTION: CLIENT sends SERVER 32 bytes of its name -- UTF-8 string
             newSocket.readData(toLength: 32, withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_NAME.rawValue)
         } else {
-            DLog("WARNING, ignoring connection attempt because I don't have a sessionDelegate assigned")
+            DLog("WARNING, ignoring connection attempt because I don't have a membershipAdminDelegate assigned")
         }
     }
     

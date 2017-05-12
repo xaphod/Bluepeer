@@ -14,7 +14,7 @@ import xaphodObjCUtils
     var bluepeerSuperAdminDelegate: BluepeerMembershipAdminDelegate?
     var bluepeerSuperRosterDelegate: BluepeerMembershipRosterDelegate?
     open var browserCompletionBlock: ((Bool) -> ())?
-    var peers: [(peer: BPPeer, inviteBlock: (_ timeoutForInvite: TimeInterval) -> Void)] = []
+    var peers: [BPPeer] = []
     var progressView: XaphodProgressView?
     var lastTimerStarted: Date?
     var timer: Timer?
@@ -30,7 +30,6 @@ import xaphodObjCUtils
         }
     }
     
-    
     override open func viewDidLoad() {
         super.viewDidLoad()
         self.setNeedsStatusBarAppearanceUpdate()
@@ -38,6 +37,7 @@ import xaphodObjCUtils
             assert(false, "ERROR: set bluepeerObject before loading view")
             return
         }
+        // this should be in viewDidLoad.
         self.bluepeerSuperAdminDelegate = bo.membershipAdminDelegate
         self.bluepeerSuperRosterDelegate = bo.membershipRosterDelegate
         bo.membershipRosterDelegate = self
@@ -87,7 +87,7 @@ import xaphodObjCUtils
         } else {
             cell = tableView.dequeueReusableCell(withIdentifier: "peerRow", for: indexPath) as! BluepeerRowTableViewCell
             cell.celltype = .normalRow
-            cell.peer = self.peers[(indexPath as NSIndexPath).row].peer
+            cell.peer = self.peers[(indexPath as NSIndexPath).row]
         }
         cell.updateDisplay()
         
@@ -111,7 +111,7 @@ import xaphodObjCUtils
         self.timer = Timer.scheduledTimer(timeInterval: 60.0, target: self, selector: #selector(timerFired), userInfo: nil, repeats: false)
         
         let peer = self.peers[(indexPath as NSIndexPath).row]
-        peer.inviteBlock(20.0)
+        peer.connect?()
     }
     
     @IBAction func cancelPressed(_ sender: AnyObject) {
@@ -149,7 +149,7 @@ extension BluepeerBrowserViewController: BluepeerMembershipRosterDelegate {
         })
     }
     
-    public func peerConnectionAttemptFailed(_ peerRole: RoleType, peer: BPPeer?, isAuthRejection: Bool) {
+    public func peerConnectionAttemptFailed(_ peerRole: RoleType, peer: BPPeer?, isAuthRejection: Bool, canConnectNow: Bool) {
         DispatchQueue.main.async(execute: {
             self.progressView?.dismiss(withAnimation: false)
             self.progressView = nil
@@ -166,11 +166,12 @@ extension BluepeerBrowserViewController: BluepeerMembershipRosterDelegate {
 
 extension BluepeerBrowserViewController: BluepeerMembershipAdminDelegate {
 
-    public func browserFoundPeer(_ role: RoleType, peer: BPPeer, inviteBlock: @escaping (_ timeoutForInvite: TimeInterval) -> Void) {
+    public func browserFoundPeer(_ role: RoleType, peer: BPPeer) {
         DispatchQueue.main.async(execute: {
-            self.bluepeerObject?.stopBrowsing()
-            self.peers.append((peer: peer, inviteBlock: inviteBlock))
-            self.tableView.reloadData()
+            if !self.peers.contains(peer) {
+                self.peers.append(peer)
+                self.tableView.reloadData()
+            }
         })
     }
     
@@ -181,7 +182,7 @@ extension BluepeerBrowserViewController: BluepeerMembershipAdminDelegate {
             self.lastTimerStarted = nil
             self.timer?.invalidate()
             self.timer = nil
-            if let index = self.peers.index(where: {$0.0 == peer}) {
+            if let index = self.peers.index(where: {$0 == peer}) {
                 self.peers.remove(at: index)
                 self.tableView.reloadData()
             }
