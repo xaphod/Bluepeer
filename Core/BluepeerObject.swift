@@ -107,6 +107,7 @@ public enum BPPeerState: Int, CustomStringConvertible {
     }
     open var customData = [String:AnyHashable]() // store your own data here. When a browser finds an advertiser and creates a peer for it, this will be filled out with the advertiser's customData *even before any connection occurs*. Note that while you can store values that are AnyHashable, only Strings are used as values for advertiser->browser connections.
     var connectCount=0, disconnectCount=0, connectAttemptFailCount=0, connectAttemptFailAuthRejectCount=0, dataRecvCount=0, dataSendCount=0
+    fileprivate var clientReceivedBytes: Int = 0
     override open var description: String {
         var socketDesc = "nil"
         if let socket = self.socket {
@@ -127,14 +128,17 @@ public enum BPPeerState: Int, CustomStringConvertible {
 }
 
 @objc public protocol BluepeerMembershipAdminDelegate {
-    @objc optional func peerConnectionRequest(_ peer: BPPeer, invitationHandler: @escaping (Bool) -> Void) // was named: sessionConnectionRequest
-    @objc optional func browserFoundPeer(_ role: RoleType, peer: BPPeer) // peer has connect() that can be executed, and your .customData too. Can be called more than once for the same peer.
+    @objc optional func peerConnectionRequest(_ peer: BPPeer, invitationHandler: @escaping (Bool) -> Void) // Someone's trying to connect to you. Earlier this was named: sessionConnectionRequest
+    @objc optional func browserFindingPeer(isNew: Bool) // There's someone out there with the same serviceType, which is now being queried for more details. This can occur as much as 2 seconds before browserFoundPeer(), so it's used to give you an early heads-up. If this peer has not been seen before, isNew is true.
+    @objc optional func browserFoundPeer(_ role: RoleType, peer: BPPeer) // You found someone to connect to. The peer has connect() that can be executed, and your .customData too. This can be called more than once for the same peer.
     @objc optional func browserLostPeer(_ role: RoleType, peer: BPPeer)
 }
 
 @objc public protocol BluepeerDataDelegate {
+    @objc optional func receivingData(bytesReceived: Int, totalBytes: Int, fromPeer peer: BPPeer) // the values of 0 and 100% are guaranteed prior to didReceiveData
     func didReceiveData(_ data: Data, fromPeer peer: BPPeer)
 }
+
 
 @objc public protocol BluepeerLoggingDelegate {
     func logString(_ message: String)
@@ -212,11 +216,11 @@ func DLog(_ items: CustomStringConvertible...) {
     var browsingWorkaroundRestarts = 0
     
     enum DataTag: Int {
-        case tag_HEADER = 1
-        case tag_BODY = 2
-        case tag_WRITING = 3
-        case tag_AUTH = 4
-        case tag_NAME = 5
+        case tag_HEADER = -1
+//        case tag_BODY = -2  -- no longer used: negative tag values are conventional, positive tag values indicate number of bytes expected to read
+        case tag_WRITING = -3
+        case tag_AUTH = -4
+        case tag_NAME = -5
     }
     
     enum Timeouts: Double {
@@ -583,6 +587,9 @@ func DLog(_ items: CustomStringConvertible...) {
 
             peer.lastReceivedData = Date.init()
             peer.dataRecvCount += 1
+            if peer.dataRecvCount + 1 == Int.max {
+                peer.dataRecvCount = 0
+            }
 
             if peer.keepaliveTimer?.isValid == true {
                 return
@@ -708,6 +715,9 @@ extension BluepeerObject : HHServiceBrowserDelegate {
             if let peer = peer {
                 DLog("didFind: added new unresolved service to peer \(peer.displayName)")
                 peer.services.append(service)
+                self.dispatch_on_delegate_queue({
+                    self.membershipAdminDelegate?.browserFindingPeer?(isNew: false)
+                })
             } else {
                 peer = BPPeer.init()
                 guard let peer = peer else { return }
@@ -715,6 +725,9 @@ extension BluepeerObject : HHServiceBrowserDelegate {
                 peer.services.append(service)
                 self.peers.append(peer)
                 DLog("didFind: created new peer \(peer.displayName). Peers(n=\(self.peers.count)) after adding")
+                self.dispatch_on_delegate_queue({
+                    self.membershipAdminDelegate?.browserFindingPeer?(isNew: true)
+                })
             }
             
             let prots = UInt32(kDNSServiceProtocol_IPv4) | UInt32(kDNSServiceProtocol_IPv6)
@@ -1152,7 +1165,11 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
                 (dataWithoutTerminator as NSData).getBytes(&length, length: 4)
                 // ignore bytes 4-8 for now
                 DLog("got header, reading \(length) bytes from \(peer.displayName)...")
-                sock.readData(toLength: length, withTimeout: Timeouts.body.rawValue, tag: DataTag.tag_BODY.rawValue)
+                peer.clientReceivedBytes = 0
+                self.dispatch_on_delegate_queue({
+                    self.dataDelegate?.receivingData?(bytesReceived: 0, totalBytes: Int(length), fromPeer: peer)
+                })
+                sock.readData(toLength: length, withTimeout: Timeouts.body.rawValue, tag: Int(length))
             }
             
         } else if tag == DataTag.tag_NAME.rawValue {
@@ -1218,9 +1235,11 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
                 })
             }
             
-        } else { // BODY case
+        } else { // BODY/data case
             let unzippedData: Data = (data as NSData).zlibInflate()
+            peer.clientReceivedBytes = 0
             self.dispatch_on_delegate_queue({
+                self.dataDelegate?.receivingData?(bytesReceived: tag, totalBytes: tag, fromPeer: peer)
                 self.dataDelegate?.didReceiveData(unzippedData, fromPeer: peer)
             })
             sock.readData(to: self.headerTerminator, withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_HEADER.rawValue)
@@ -1228,10 +1247,13 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
     }
     
     public func socket(_ sock: GCDAsyncSocket, didReadPartialDataOfLength partialLength: UInt, tag: Int) {
-        guard let peer = sock.peer else {
-            return
-        }
+        guard let peer = sock.peer else { return }
         self.scheduleNextKeepaliveTimer(peer)
+        guard partialLength > 0 else { return }
+        peer.clientReceivedBytes += Int(partialLength)
+        self.dispatch_on_delegate_queue({
+            self.dataDelegate?.receivingData?(bytesReceived: peer.clientReceivedBytes, totalBytes: tag, fromPeer: peer)
+        })
     }
     
     public func socket(_ sock: GCDAsyncSocket, shouldTimeoutReadWithTag tag: Int, elapsed: TimeInterval, bytesDone length: UInt) -> TimeInterval {
