@@ -121,7 +121,7 @@ import xaphodObjCUtils
         })
     }
     
-    func timerFired(_ timer: Timer) {
+    @objc func timerFired(_ timer: Timer) {
         NSLog("Timer fired.")
         if let _ = self.lastTimerStarted {
             if (self.progressView != nil) {

@@ -61,7 +61,7 @@ let iOS_wifi_interface = "en0"
 }
 
 
-public enum BPPeerState: Int, CustomStringConvertible {
+@objc public enum BPPeerState: Int, CustomStringConvertible {
     case notConnected = 0
     case connecting = 1
     case awaitingAuth = 2
@@ -78,10 +78,10 @@ public enum BPPeerState: Int, CustomStringConvertible {
 }
 
 @objc open class BPPeer: NSObject {
-    open var displayName: String = "" // is same as HHService.name !
+    @objc open var displayName: String = "" // is same as HHService.name !
     fileprivate var socket: GCDAsyncSocket?
-    open var role: RoleType = .unknown
-    open var state: BPPeerState = .notConnected
+    @objc open var role: RoleType = .unknown
+    @objc open var state: BPPeerState = .notConnected
     fileprivate var services = [HHService]()
     fileprivate func resolvedServices() -> [HHService] {
         return services.filter { $0.resolved == true }
@@ -98,14 +98,14 @@ public enum BPPeerState: Int, CustomStringConvertible {
         services = [HHService]()
     }
     fileprivate var lastInterfaceName: String?
-    open var keepaliveTimer: Timer?
-    open var lastReceivedData: Date = Date.init(timeIntervalSince1970: 0)
-    open var connect: (()->Void)?
-    open func disconnect() {
+    @objc open var keepaliveTimer: Timer?
+    @objc open var lastReceivedData: Date = Date.init(timeIntervalSince1970: 0)
+    @objc open var connect: (()->Void)?
+    @objc open func disconnect() {
         DLog("\(displayName): disconnect() called")
         socket?.disconnect()
     }
-    open var customData = [String:AnyHashable]() // store your own data here. When a browser finds an advertiser and creates a peer for it, this will be filled out with the advertiser's customData *even before any connection occurs*. Note that while you can store values that are AnyHashable, only Strings are used as values for advertiser->browser connections.
+    @objc open var customData = [String:AnyHashable]() // store your own data here. When a browser finds an advertiser and creates a peer for it, this will be filled out with the advertiser's customData *even before any connection occurs*. Note that while you can store values that are AnyHashable, only Strings are used as values for advertiser->browser connections.
     var connectCount=0, disconnectCount=0, connectAttemptFailCount=0, connectAttemptFailAuthRejectCount=0, dataRecvCount=0, dataSendCount=0
     fileprivate var clientReceivedBytes: Int = 0
     override open var description: String {
@@ -136,12 +136,12 @@ public enum BPPeerState: Int, CustomStringConvertible {
 
 @objc public protocol BluepeerDataDelegate {
     @objc optional func receivingData(bytesReceived: Int, totalBytes: Int, fromPeer peer: BPPeer) // the values of 0 and 100% are guaranteed prior to didReceiveData
-    func didReceiveData(_ data: Data, fromPeer peer: BPPeer)
+    @objc func didReceiveData(_ data: Data, fromPeer peer: BPPeer)
 }
 
 
 @objc public protocol BluepeerLoggingDelegate {
-    func logString(_ message: String)
+    @objc func logString(_ message: String)
 }
 
 /* ADD TO POD FILE
@@ -182,38 +182,38 @@ func DLog(_ items: CustomStringConvertible...) {
 
 @objc open class BluepeerObject: NSObject {
     
-    var delegateQueue: DispatchQueue?
-    var serverSocket: GCDAsyncSocket?
-    var publisher: HHServicePublisher?
-    var browser: HHServiceBrowser?
+    @objc var delegateQueue: DispatchQueue?
+    @objc var serverSocket: GCDAsyncSocket?
+    @objc var publisher: HHServicePublisher?
+    @objc var browser: HHServiceBrowser?
     fileprivate var bluepeerInterfaces: BluepeerInterfaces = .any
     open var advertisingRole: RoleType?
-    var advertisingCustomData = [String:String]()
-    open var browsing: Bool = false
+    @objc var advertisingCustomData = [String:String]()
+    @objc open var browsing: Bool = false
     var onLastBackground: (advertising: RoleType?, browsing: Bool) = (nil, false)
-    open var serviceType: String = ""
-    var serverPort: UInt16 = 0
-    var versionString: String = "unknown"
-    open var displayNameSanitized: String = ""
-    var appIsInBackground = false
+    @objc open var serviceType: String = ""
+    @objc var serverPort: UInt16 = 0
+    @objc var versionString: String = "unknown"
+    @objc open var displayNameSanitized: String = ""
+    @objc var appIsInBackground = false
     
-    weak open var membershipAdminDelegate: BluepeerMembershipAdminDelegate?
-    weak open var membershipRosterDelegate: BluepeerMembershipRosterDelegate?
-    weak open var dataDelegate: BluepeerDataDelegate?
-    weak open var logDelegate: BluepeerLoggingDelegate? {
+    @objc weak open var membershipAdminDelegate: BluepeerMembershipAdminDelegate?
+    @objc weak open var membershipRosterDelegate: BluepeerMembershipRosterDelegate?
+    @objc weak open var dataDelegate: BluepeerDataDelegate?
+    @objc weak open var logDelegate: BluepeerLoggingDelegate? {
         didSet {
             fileLogDelegate = logDelegate
         }
     }
-    open var peers = [BPPeer]() // does not include self
-    open var bluetoothState : BluetoothState = .unknown
-    var bluetoothPeripheralManager: CBPeripheralManager!
-    open var bluetoothBlock: ((_ bluetoothState: BluetoothState) -> Void)?
-    open var disconnectOnBackground: Bool = false
+    @objc open var peers = [BPPeer]() // does not include self
+    @objc open var bluetoothState : BluetoothState = .unknown
+    @objc var bluetoothPeripheralManager: CBPeripheralManager!
+    @objc open var bluetoothBlock: ((_ bluetoothState: BluetoothState) -> Void)?
+    @objc open var disconnectOnBackground: Bool = false
     let headerTerminator: Data = "\r\n\r\n".data(using: String.Encoding.utf8)! // same as HTTP. But header content here is just a number, representing the byte count of the incoming nsdata.
     let keepAliveHeader: Data = "0 ! 0 ! 0 ! 0 ! 0 ! 0 ! 0 ! ".data(using: String.Encoding.utf8)! // A special header kept to avoid timeouts
     let socketQueue = DispatchQueue(label: "xaphod.bluepeer.socketQueue", attributes: [])
-    var browsingWorkaroundRestarts = 0
+    @objc var browsingWorkaroundRestarts = 0
     
     enum DataTag: Int {
         case tag_HEADER = -1
@@ -230,7 +230,7 @@ func DLog(_ items: CustomStringConvertible...) {
     }
     
     // if queue isn't given, main queue is used
-    public init?(serviceType: String, displayName:String?, queue:DispatchQueue?, serverPort: UInt16, interfaces: BluepeerInterfaces, bluetoothBlock: ((_ bluetoothState: BluetoothState)->Void)?) {
+    @objc public init?(serviceType: String, displayName:String?, queue:DispatchQueue?, serverPort: UInt16, interfaces: BluepeerInterfaces, bluetoothBlock: ((_ bluetoothState: BluetoothState)->Void)?) {
         
         super.init()
         
@@ -288,7 +288,7 @@ func DLog(_ items: CustomStringConvertible...) {
     }
     
     // Note: if I disconnect, then my delegate is expected to reconnect if needed.
-    func didEnterBackground() {
+    @objc func didEnterBackground() {
         self.appIsInBackground = true
         self.onLastBackground = (self.advertisingRole, self.browsing)
         stopBrowsing()
@@ -301,7 +301,7 @@ func DLog(_ items: CustomStringConvertible...) {
         }
     }
     
-    func willEnterForeground() {
+    @objc func willEnterForeground() {
         DLog("willEnterForeground")
         self.appIsInBackground = false
         if let role = self.onLastBackground.advertising {
@@ -358,7 +358,7 @@ func DLog(_ items: CustomStringConvertible...) {
         return retval
     }
     
-    open func disconnectSession() {
+    @objc open func disconnectSession() {
         // don't close serverSocket: expectation is that only stopAdvertising does this
         // loop through peers, disconenct all sockets
         for peer in self.peers {
@@ -374,16 +374,16 @@ func DLog(_ items: CustomStringConvertible...) {
         self.peers = [] // remove all peers!
     }
     
-    open func connectedPeers(_ role: RoleType) -> [BPPeer] {
+    @objc open func connectedPeers(_ role: RoleType) -> [BPPeer] {
         return self.peers.filter({ $0.role == role && $0.state == .authenticated })
     }
     
-    open func connectedPeers() -> [BPPeer] {
+    @objc open func connectedPeers() -> [BPPeer] {
         return self.peers.filter({ $0.state == .authenticated })
     }
     
     // specify customData if this is needed for browser to decide whether to connect or not. Each key and value should be less than 255 bytes, and the total should be less than 1300 bytes.
-    open func startAdvertising(_ role: RoleType, customData: [String:String]) {
+    @objc open func startAdvertising(_ role: RoleType, customData: [String:String]) {
         if let _ = self.advertisingRole {
             DLog("Already advertising (no-op)")
             return
@@ -438,7 +438,7 @@ func DLog(_ items: CustomStringConvertible...) {
         self.advertisingRole = role
     }
     
-    open func stopAdvertising(leaveServerSocketAlone: Bool = false) {
+    @objc open func stopAdvertising(leaveServerSocketAlone: Bool = false) {
         if let _ = self.advertisingRole {
             guard let publisher = self.publisher else {
                 DLog("publisher is MIA while advertising set true! ERROR. Setting advertising=false")
@@ -485,7 +485,7 @@ func DLog(_ items: CustomStringConvertible...) {
         }
     }
     
-    open func startBrowsing() {
+    @objc open func startBrowsing() {
         if self.browsing == true {
             DLog("Already browsing (no-op)")
             return
@@ -514,7 +514,7 @@ func DLog(_ items: CustomStringConvertible...) {
         DLog("now browsing")
     }
     
-    open func stopBrowsing() {
+    @objc open func stopBrowsing() {
         if (self.browsing) {
             if self.browser == nil {
                 DLog("WARNING, browser is MIA while browsing set true! ")
@@ -532,7 +532,7 @@ func DLog(_ items: CustomStringConvertible...) {
         }
     }
     
-    open func sendData(_ datas: [Data], toPeers:[BPPeer]) throws {
+    @objc open func sendData(_ datas: [Data], toPeers:[BPPeer]) throws {
         for data in datas {
             for peer in toPeers {
                 self.sendDataInternal(peer, data: data)
@@ -540,7 +540,7 @@ func DLog(_ items: CustomStringConvertible...) {
         }
     }
     
-    open func sendData(_ datas: [Data], toRole: RoleType) throws {
+    @objc open func sendData(_ datas: [Data], toRole: RoleType) throws {
         let targetPeers: [BPPeer] = peers.filter({
             if toRole != .any {
                 return $0.role == toRole && $0.state == .authenticated
@@ -601,7 +601,7 @@ func DLog(_ items: CustomStringConvertible...) {
         })
     }
     
-    func keepAliveTimerFired(_ timer: Timer) {
+    @objc func keepAliveTimerFired(_ timer: Timer) {
         guard let ui = timer.userInfo as? Dictionary<String, AnyObject> else {
             assert(false, "ERROR")
             timer.invalidate()
@@ -639,7 +639,7 @@ func DLog(_ items: CustomStringConvertible...) {
         }
     }
     
-    open func getBrowser(_ completionBlock: @escaping (Bool) -> ()) -> UIViewController? {
+    @objc open func getBrowser(_ completionBlock: @escaping (Bool) -> ()) -> UIViewController? {
         let initialVC = self.getStoryboard()?.instantiateInitialViewController()
         var browserVC = initialVC
         if let nav = browserVC as? UINavigationController {
