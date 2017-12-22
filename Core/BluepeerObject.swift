@@ -12,6 +12,7 @@ import CocoaAsyncSocket // NOTE: requires pod CocoaAsyncSocket
 import HHServices
 import dnssd
 import xaphodObjCUtils
+import DataCompression
 
 let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2
 let iOS_wifi_interface = "en0"
@@ -130,6 +131,7 @@ let iOS_wifi_interface = "en0"
 @objc public protocol BluepeerMembershipAdminDelegate {
     @objc optional func peerConnectionRequest(_ peer: BPPeer, invitationHandler: @escaping (Bool) -> Void) // Someone's trying to connect to you. Earlier this was named: sessionConnectionRequest
     @objc optional func browserFindingPeer(isNew: Bool) // There's someone out there with the same serviceType, which is now being queried for more details. This can occur as much as 2 seconds before browserFoundPeer(), so it's used to give you an early heads-up. If this peer has not been seen before, isNew is true.
+    @objc optional func browserFindingPeerFailed() // balances the previous call. Use to cancel UI like progress indicator etc.
     @objc optional func browserFoundPeer(_ role: RoleType, peer: BPPeer) // You found someone to connect to. The peer has connect() that can be executed, and your .customData too. This can be called more than once for the same peer.
     @objc optional func browserLostPeer(_ role: RoleType, peer: BPPeer)
 }
@@ -215,6 +217,12 @@ func DLog(_ items: CustomStringConvertible...) {
     let socketQueue = DispatchQueue(label: "xaphod.bluepeer.socketQueue", attributes: [])
     @objc var browsingWorkaroundRestarts = 0
     
+    /// ZLIB  : Fast with a very solid compression rate. There is a reason it is used everywhere.
+    /// LZFSE : Apples proprietary compression algorithm. Claims to compress as good as ZLIB but 2 to 3 times faster.
+    /// LZMA  : Horribly slow. Compression as well as decompression. Normally you will regret choosing LZMA.
+    /// LZ4   : Fast, but depending on the data the compression rate can be really bad. Which is often the case.
+    open var compressionAlgorithm: Data.CompressionAlgorithm = .LZMA
+    
     enum DataTag: Int {
         case tag_HEADER = -1
 //        case tag_BODY = -2  -- no longer used: negative tag values are conventional, positive tag values indicate number of bytes expected to read
@@ -235,7 +243,7 @@ func DLog(_ items: CustomStringConvertible...) {
         super.init()
         
         // serviceType must be 1-15 chars, only a-z0-9 and hyphen, eg "xd-blueprint"
-        if serviceType.characters.count > 15 {
+        if serviceType.count > 15 {
             assert(false, "ERROR: service name is too long")
             return nil
         }
@@ -316,7 +324,7 @@ func DLog(_ items: CustomStringConvertible...) {
     
     func sanitizeCharsToDNSChars(str: String) -> String {
         let acceptableChars = CharacterSet.init(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz1234567890-")
-        return String(str.characters.filter({ $0 != "'"}).map { (char: Character) in
+        return String(str.filter({ $0 != "'"}).map { (char: Character) in
             if acceptableChars.containsCharacter(char) == false {
                 return "-"
             } else {
@@ -336,7 +344,7 @@ func DLog(_ items: CustomStringConvertible...) {
         var strData = Data.init(capacity: 32)
         
         // make 27-byte UTF-8 name
-        for c in retval.characters {
+        for c in retval {
             if let thisData = String.init(c).data(using: String.Encoding.utf8) {
                 if thisData.count + (strData.count) <= 27 {
                     strData.append(thisData)
@@ -395,7 +403,7 @@ func DLog(_ items: CustomStringConvertible...) {
         // txtData, from http://www.zeroconf.org/rendezvous/txtrecords.html: Using TXT records larger than 1300 bytes is NOT RECOMMENDED at this time. The format of the data within a DNS TXT record is zero or more strings, packed together in memory without any intervening gaps or padding bytes for word alignment. The format of each constituent string within the DNS TXT record is a single length byte, followed by 0-255 bytes of text data.
     
         // Could use the NSNetService version of this (TXTDATA maker), it'd be easier :)
-        var swiftdict: [String:String] = ["role":role.description]
+        var swiftdict: [String:String] = ["role":role.description, "comp":"1"] // 1.3.0: added compression flag to advertising/browsing, to make sure old clients cannot connect to new ones due to differing compression algorithms
         self.advertisingCustomData = customData
         swiftdict.merge(with: customData)
         
@@ -563,15 +571,22 @@ func DLog(_ items: CustomStringConvertible...) {
         // send header first. Then separator. Then send body.
         // length: send as 4-byte, then 4 bytes of unused 0s for now. assumes endianness doesn't change between platforms, ie 23 00 00 00 not 00 00 00 23
         
-        // zip that data
-        let zippedData = (data as NSData).zlibDeflate()!
-        var length: UInt = UInt(zippedData.count)
+        // compress that data
+        
+        let compressionStart = Date.init()
+        guard let compressedData = data.compress(withAlgorithm: self.compressionAlgorithm) else {
+            assert(false)
+            return
+        }
+        let timeToCompress = abs(compressionStart.timeIntervalSinceNow)
+        let ratio = Double(compressedData.count) / Double(data.count) * 100.0
+        var length: UInt = UInt(compressedData.count)
         let senddata = NSMutableData.init(bytes: &length, length: 4)
         let unused4bytesdata = NSMutableData.init(length: 4)!
         senddata.append(unused4bytesdata as Data)
         senddata.append(self.headerTerminator)
-        senddata.append(zippedData)
-        DLog("sending data to \(peer.displayName): \(data.count) bytes zipped&pkgd to \(senddata.length)")
+        senddata.append(compressedData)
+        DLog("sending \(senddata.length) bytes to \(peer.displayName): \(data.count) bytes compressed to \(compressedData.count) bytes (\(ratio)%) in \(timeToCompress)s")
 
         
 //        DLog("sendDataInternal writes: \((senddata as Data).hex), payload part: \(data.hex)")
@@ -773,34 +788,45 @@ extension BluepeerObject : HHServiceBrowserDelegate {
 
 extension BluepeerObject : HHServiceDelegate {
     public func serviceDidResolve(_ service: HHService, moreComing: Bool) {
+        func cleanup() {
+            self.dispatch_on_delegate_queue({
+                self.membershipAdminDelegate?.browserFindingPeerFailed?()
+            })
+        }
+        
         if self.browsing == false {
             return
         }
         
         guard let txtdata = service.txtData else {
             DLog("serviceDidResolve IGNORING service because no txtData found")
+            cleanup()
             return
         }
         guard let hhaddresses: [HHAddressInfo] = service.resolvedAddressInfo, hhaddresses.count > 0 else {
             DLog("serviceDidResolve IGNORING service because could not get resolvedAddressInfo")
+            cleanup()
             return
         }
         
         let cfdict: Unmanaged<CFDictionary>? = CFNetServiceCreateDictionaryWithTXTData(kCFAllocatorDefault, txtdata as CFData)
         guard let _ = cfdict else {
             DLog("serviceDidResolve IGNORING service because txtData was invalid")
+            cleanup()
             return
         }
         let dict: NSDictionary = cfdict!.takeUnretainedValue()
         guard let rD = dict["role"] as? Data,
             let roleStr = String.init(data: rD, encoding: String.Encoding.utf8) else {
             DLog("serviceDidResolve IGNORING service because role was missing")
+            cleanup()
             return
         }
         let role = RoleType.roleFromString(roleStr)
         switch role {
         case .unknown:
             assert(false, "Expecting a role that isn't unknown here")
+            cleanup()
             return
         default:
             break
@@ -827,12 +853,20 @@ extension BluepeerObject : HHServiceDelegate {
         if matchingPeers.count != 1 {
             DLog("serviceDidResolve FAILED, expected 1 peer but found \(matchingPeers.count)")
             assert(false)
+            cleanup()
             return
         }
         let peer = matchingPeers.first!
         peer.role = role
         peer.customData = customData
         DLog("serviceDidResolve for \(peer.displayName) - addresses \(hhaddresses.count), peer.role: \(role), peer.state: \(peer.state), #customData:\(customData.count)")
+        
+        // if has insufficient version, don't announce it
+        guard let compStr = customData["comp"], compStr == "1" else {
+            DLog("serviceDidResolve: IGNORING THIS PEER, IT IS TOO OLD - DOES NOT SUPPORT CORRECT COMPRESSION ALGORITHM")
+            cleanup()
+            return
+        }
         
         let candidates = hhaddresses.filter({ $0.isCandidateAddress(excludeWifi: self.bluepeerInterfaces == .notWifi, onlyWifi: self.bluepeerInterfaces == .infrastructureModeWifiOnly) })
         if peer.state != .notConnected {
@@ -945,6 +979,9 @@ extension BluepeerObject : HHServiceDelegate {
     
     public func serviceDidNotResolve(_ service: HHService) {
         DLog("****** ERROR, service did not resolve: \(service.name) *******")
+        self.dispatch_on_delegate_queue({
+            self.membershipAdminDelegate?.browserFindingPeerFailed?()
+        })
     }
 }
 
@@ -996,10 +1033,12 @@ extension HHAddressInfo {
             assert(false, "error")
             return nil
         }
-        let ip = ipAndPort.substring(to: lastColonIndex)
+        let ip = String(ipAndPort[..<lastColonIndex])
         if ipAndPort.components(separatedBy: ":").count-1 > 1 {
             // ipv6 - looks like [00:22:22.....]:port
-            return ip.substring(with: Range(uncheckedBounds: (lower: ip.index(ip.startIndex, offsetBy: 1), upper: ip.index(ip.endIndex, offsetBy: -1))))
+            let start = ip.index(ip.startIndex, offsetBy: 1)
+            let end = ip.index(ip.endIndex, offsetBy: -1)
+            return String(ip[start ..< end])
         }
         return ip
     }
@@ -1056,12 +1095,6 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
         let matchingPeers = self.peers.filter({ $0.socket == sock})
         if matchingPeers.count != 1 {
             DLog(" socketDidDisconnect: WARNING expected to find 1 peer with this socket but found \(matchingPeers.count), calling peerConnectionAttemptFailed.")
-//            if let adRole = self.advertisingRole {
-//                self.socketQueue.asyncAfter(deadline: .now() + 2.0, execute: {
-//                    self.stopAdvertising()
-//                    self.startAdvertising(adRole, customData: self.advertisingCustomData)
-//                })
-//            }
             sock.synchronouslySetDelegate(nil)
             self.dispatch_on_delegate_queue({
                 self.membershipRosterDelegate?.peerConnectionAttemptFailed?(.unknown, peer: nil, isAuthRejection: false, canConnectNow: false)
@@ -1080,14 +1113,6 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
         switch oldState {
         case .authenticated:
             peer.disconnectCount += 1
-//            if let lastInterface = peer.lastInterfaceName, lastInterface != iOS_wifi_interface, let adRole = self.advertisingRole {
-//                self.socketQueue.asyncAfter(deadline: .now() + 2.0, execute: {
-//                    DLog("Previously connected peer disconnected on non-wifi interface. Cycling server socket now")
-//                    self.stopAdvertising()
-//                    self.startAdvertising(adRole, customData: self.advertisingCustomData)
-//                })
-//            }
-            
             self.dispatch_on_delegate_queue({
                 self.membershipRosterDelegate?.peerDidDisconnect?(peer.role, peer: peer, canConnectNow: self.canConnectNow(peer))
             })
@@ -1159,8 +1184,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
                 DLog("readKeepAlive from \(peer.displayName)")
                 sock.readData(to: self.headerTerminator, withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_HEADER.rawValue)
             } else {
-                // take the first 4 bytes and use them as UInt of length of data. read the next 4 bytes and discard for now, might use them as version code? in future
-                
+                // take the first 4 bytes and use them as UInt of length of data. read the next 4 bytes and discard for now, might use them for versioning/feature-supported in future, where clients are allowed to connect but have different feature abilities (as opposed to limiting what services you can see)
                 var length: UInt = 0
                 (dataWithoutTerminator as NSData).getBytes(&length, length: 4)
                 // ignore bytes 4-8 for now
@@ -1236,11 +1260,14 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             }
             
         } else { // BODY/data case
-            let unzippedData: Data = (data as NSData).zlibInflate()
+            guard let uncompressedData = data.decompress(withAlgorithm: self.compressionAlgorithm) else {
+                assert(false)
+                return
+            }
             peer.clientReceivedBytes = 0
             self.dispatch_on_delegate_queue({
                 self.dataDelegate?.receivingData?(bytesReceived: tag, totalBytes: tag, fromPeer: peer)
-                self.dataDelegate?.didReceiveData(unzippedData, fromPeer: peer)
+                self.dataDelegate?.didReceiveData(uncompressedData, fromPeer: peer)
             })
             sock.readData(to: self.headerTerminator, withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_HEADER.rawValue)
         }
