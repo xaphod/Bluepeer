@@ -223,6 +223,7 @@ func DLog(_ items: CustomStringConvertible...) {
     /// LZMA  : Horribly slow. Compression as well as decompression. Normally you will regret choosing LZMA.
     /// LZ4   : Fast, but depending on the data the compression rate can be really bad. Which is often the case.
     open var compressionAlgorithm: Data.CompressionAlgorithm? = .LZFSE
+    @objc open func turnOffCompression() { self.compressionAlgorithm = nil }
     
     enum DataTag: Int {
         case tag_HEADER = -1
