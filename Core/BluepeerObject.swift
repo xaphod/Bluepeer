@@ -217,11 +217,12 @@ func DLog(_ items: CustomStringConvertible...) {
     let socketQueue = DispatchQueue(label: "xaphod.bluepeer.socketQueue", attributes: [])
     @objc var browsingWorkaroundRestarts = 0
     
+    /// nil   : no compression
     /// ZLIB  : Fast with a very solid compression rate. There is a reason it is used everywhere.
     /// LZFSE : Apples proprietary compression algorithm. Claims to compress as good as ZLIB but 2 to 3 times faster.
     /// LZMA  : Horribly slow. Compression as well as decompression. Normally you will regret choosing LZMA.
     /// LZ4   : Fast, but depending on the data the compression rate can be really bad. Which is often the case.
-    open var compressionAlgorithm: Data.CompressionAlgorithm = .LZMA
+    open var compressionAlgorithm: Data.CompressionAlgorithm? = .LZFSE
     
     enum DataTag: Int {
         case tag_HEADER = -1
@@ -573,20 +574,28 @@ func DLog(_ items: CustomStringConvertible...) {
         
         // compress that data
         
-        let compressionStart = Date.init()
-        guard let compressedData = data.compress(withAlgorithm: self.compressionAlgorithm) else {
-            assert(false)
-            return
+        var dataToSend: Data
+        var ratio: Double = 100.0
+        var timeToCompress: Double = 0.0
+        if let algorithm = self.compressionAlgorithm {
+            let compressionStart = Date.init()
+            guard let compressedData = data.compress(withAlgorithm: algorithm) else {
+                assert(false)
+                return
+            }
+            timeToCompress = abs(compressionStart.timeIntervalSinceNow)
+            ratio = Double(compressedData.count) / Double(data.count) * 100.0
+            dataToSend = compressedData
+        } else {
+            dataToSend = data
         }
-        let timeToCompress = abs(compressionStart.timeIntervalSinceNow)
-        let ratio = Double(compressedData.count) / Double(data.count) * 100.0
-        var length: UInt = UInt(compressedData.count)
+        var length: UInt = UInt(dataToSend.count)
         let senddata = NSMutableData.init(bytes: &length, length: 4)
         let unused4bytesdata = NSMutableData.init(length: 4)!
         senddata.append(unused4bytesdata as Data)
         senddata.append(self.headerTerminator)
-        senddata.append(compressedData)
-        DLog("sending \(senddata.length) bytes to \(peer.displayName): \(data.count) bytes compressed to \(compressedData.count) bytes (\(ratio)%) in \(timeToCompress)s")
+        senddata.append(dataToSend)
+        DLog("sending \(senddata.length) bytes to \(peer.displayName): \(data.count) bytes compressed to \(dataToSend.count) bytes (\(ratio)%) in \(timeToCompress)s")
 
         
 //        DLog("sendDataInternal writes: \((senddata as Data).hex), payload part: \(data.hex)")
@@ -1260,14 +1269,18 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             }
             
         } else { // BODY/data case
-            guard let uncompressedData = data.decompress(withAlgorithm: self.compressionAlgorithm) else {
-                assert(false)
-                return
+            var data = data
+            if let algorithm = self.compressionAlgorithm {
+                guard let uncompressedData = data.decompress(withAlgorithm: algorithm) else {
+                    assert(false, "Could not decompress data")
+                    return
+                }
+                data = uncompressedData
             }
             peer.clientReceivedBytes = 0
             self.dispatch_on_delegate_queue({
                 self.dataDelegate?.receivingData?(bytesReceived: tag, totalBytes: tag, fromPeer: peer)
-                self.dataDelegate?.didReceiveData(uncompressedData, fromPeer: peer)
+                self.dataDelegate?.didReceiveData(data, fromPeer: peer)
             })
             sock.readData(to: self.headerTerminator, withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_HEADER.rawValue)
         }
