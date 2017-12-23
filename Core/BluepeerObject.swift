@@ -168,13 +168,12 @@ func DLog(_ items: CustomStringConvertible...) {
     }
 
     if let del = fileLogDelegate {
-        del.logString(str)
+        del.logString("Bluepeer " + str)
     } else {
         #if DEBUG
             let formatter = DateFormatter.init()
-            formatter.dateStyle = .none
-            formatter.timeStyle = .medium
-            let out = "BP " + formatter.string(from: Date.init()) + " - " + str
+            formatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSSS"
+            let out = "Bluepeer " + formatter.string(from: Date.init()) + " - " + str
             print(out)
         #endif
     }
@@ -240,10 +239,11 @@ func DLog(_ items: CustomStringConvertible...) {
     }
     
     // if queue isn't given, main queue is used
-    @objc public init?(serviceType: String, displayName:String?, queue:DispatchQueue?, serverPort: UInt16, interfaces: BluepeerInterfaces, bluetoothBlock: ((_ bluetoothState: BluetoothState)->Void)?) {
+    @objc public init?(serviceType: String, displayName:String?, queue:DispatchQueue?, serverPort: UInt16, interfaces: BluepeerInterfaces, logDelegate: BluepeerLoggingDelegate? = nil, bluetoothBlock: ((_ bluetoothState: BluetoothState)->Void)?) {
         
         super.init()
-        
+        fileLogDelegate = logDelegate
+
         // serviceType must be 1-15 chars, only a-z0-9 and hyphen, eg "xd-blueprint"
         if serviceType.count > 15 {
             assert(false, "ERROR: service name is too long")
