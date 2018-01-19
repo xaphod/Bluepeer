@@ -156,7 +156,7 @@ open class HotPotatoNetwork: CustomStringConvertible {
     
     open func startLookingForPotatoPeers(interfaces: BluepeerInterfaces) {
         var bluepeerServiceName = self.networkName!
-        if bluepeerServiceName.characters.count > 15 {
+        if bluepeerServiceName.count > 15 {
             bluepeerServiceName = bluepeerServiceName.substring(to: bluepeerServiceName.index(bluepeerServiceName.startIndex, offsetBy:14))
         }
         self.logDelegate?.logString("HPN: startConnecting, Bluepeer service name: \(bluepeerServiceName), device: \(self.deviceIdentifier) / \(self.deviceIdentifier.hashValue)")
