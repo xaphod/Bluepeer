@@ -410,12 +410,11 @@ func DLog(_ items: CustomStringConvertible...) {
         swiftdict.merge(with: customData)
         
         let cfdata: Unmanaged<CFData>? = CFNetServiceCreateTXTDataWithDictionary(kCFAllocatorDefault, swiftdict as CFDictionary)
-        let txtdata = cfdata?.takeUnretainedValue()
-        guard let _ = txtdata else {
-            DLog("ERROR could not create TXTDATA nsdata")
+        guard let txtdata = cfdata?.takeUnretainedValue() else {
+            DLog("ERROR could not create TXTDATA")
             return
         }
-        self.publisher = HHServicePublisher.init(name: self.displayNameSanitized, type: self.serviceType, domain: "local.", txtData: txtdata as Data!, port: UInt(serverPort))
+        self.publisher = HHServicePublisher.init(name: self.displayNameSanitized, type: self.serviceType, domain: "local.", txtData: txtdata as Data, port: UInt(serverPort))
         self.publisher?.mainDispatchQueue = socketQueue
         
         guard let publisher = self.publisher else {
