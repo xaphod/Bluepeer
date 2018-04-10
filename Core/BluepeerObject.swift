@@ -123,22 +123,22 @@ let iOS_wifi_interface = "en0"
 }
 
 @objc public protocol BluepeerMembershipRosterDelegate {
-    @objc optional func peerDidConnect(_ peerRole: RoleType, peer: BPPeer)
-    @objc optional func peerDidDisconnect(_ peerRole: RoleType, peer: BPPeer, canConnectNow: Bool) // canConnectNow: true if this peer is still announce-able, ie. can now call connect() on it. Note, it is highly recommended to have a ~2 sec delay before calling connect() to avoid 100% CPU loops
-    @objc optional func peerConnectionAttemptFailed(_ peerRole: RoleType, peer: BPPeer?, isAuthRejection: Bool, canConnectNow: Bool) // canConnectNow: true if this peer is still announce-able, ie. can now call connect() on it. Note, it is highly recommended to have a ~2 sec delay before calling connect() to avoid 100% CPU loops
+    @objc optional func bluepeer(_ bluepeerObject: BluepeerObject, peerDidConnect peerRole: RoleType, peer: BPPeer)
+    @objc optional func bluepeer(_ bluepeerObject: BluepeerObject, peerDidDisconnect peerRole: RoleType, peer: BPPeer, canConnectNow: Bool) // canConnectNow: true if this peer is still announce-able, ie. can now call connect() on it. Note, it is highly recommended to have a ~2 sec delay before calling connect() to avoid 100% CPU loops
+    @objc optional func bluepeer(_ bluepeerObject: BluepeerObject, peerConnectionAttemptFailed peerRole: RoleType, peer: BPPeer?, isAuthRejection: Bool, canConnectNow: Bool) // canConnectNow: true if this peer is still announce-able, ie. can now call connect() on it. Note, it is highly recommended to have a ~2 sec delay before calling connect() to avoid 100% CPU loops
 }
 
 @objc public protocol BluepeerMembershipAdminDelegate {
-    @objc optional func peerConnectionRequest(_ peer: BPPeer, invitationHandler: @escaping (Bool) -> Void) // Someone's trying to connect to you. Earlier this was named: sessionConnectionRequest
-    @objc optional func browserFindingPeer(isNew: Bool) // There's someone out there with the same serviceType, which is now being queried for more details. This can occur as much as 2 seconds before browserFoundPeer(), so it's used to give you an early heads-up. If this peer has not been seen before, isNew is true.
-    @objc optional func browserFindingPeerFailed() // balances the previous call. Use to cancel UI like progress indicator etc.
-    @objc optional func browserFoundPeer(_ role: RoleType, peer: BPPeer) // You found someone to connect to. The peer has connect() that can be executed, and your .customData too. This can be called more than once for the same peer.
-    @objc optional func browserLostPeer(_ role: RoleType, peer: BPPeer)
+    @objc optional func bluepeer(_ bluepeerObject: BluepeerObject, peerConnectionRequest peer: BPPeer, invitationHandler: @escaping (Bool) -> Void) // Someone's trying to connect to you. Earlier this was named: sessionConnectionRequest
+    @objc optional func bluepeer(_ bluepeerObject: BluepeerObject, browserFindingPeer isNew: Bool) // There's someone out there with the same serviceType, which is now being queried for more details. This can occur as much as 2 seconds before browserFoundPeer(), so it's used to give you an early heads-up. If this peer has not been seen before, isNew is true.
+    @objc optional func bluepeer(_ bluepeerObject: BluepeerObject, browserFindingPeerFailed unused: Bool) // balances the previous call. Use to cancel UI like progress indicator etc.
+    @objc optional func bluepeer(_ bluepeerObject: BluepeerObject, browserFoundPeer role: RoleType, peer: BPPeer) // You found someone to connect to. The peer has connect() that can be executed, and your .customData too. This can be called more than once for the same peer.
+    @objc optional func bluepeer(_ bluepeerObject: BluepeerObject, browserLostPeer role: RoleType, peer: BPPeer)
 }
 
 @objc public protocol BluepeerDataDelegate {
-    @objc optional func receivingData(bytesReceived: Int, totalBytes: Int, fromPeer peer: BPPeer) // the values of 0 and 100% are guaranteed prior to didReceiveData
-    @objc func didReceiveData(_ data: Data, fromPeer peer: BPPeer)
+    @objc optional func bluepeer(_ bluepeerObject: BluepeerObject, receivingData bytesReceived: Int, totalBytes: Int, peer: BPPeer) // the values of 0 and 100% are guaranteed prior to didReceiveData
+    @objc func bluepeer(_ bluepeerObject: BluepeerObject, didReceiveData data: Data, peer: BPPeer)
 }
 
 
@@ -740,7 +740,7 @@ extension BluepeerObject : HHServiceBrowserDelegate {
                 DLog("didFind: added new unresolved service to peer \(peer.displayName)")
                 peer.services.append(service)
                 self.dispatch_on_delegate_queue({
-                    self.membershipAdminDelegate?.browserFindingPeer?(isNew: false)
+                    self.membershipAdminDelegate?.bluepeer?(self, browserFindingPeer: false)
                 })
             } else {
                 peer = BPPeer.init()
@@ -750,7 +750,7 @@ extension BluepeerObject : HHServiceBrowserDelegate {
                 self.peers.append(peer)
                 DLog("didFind: created new peer \(peer.displayName). Peers(n=\(self.peers.count)) after adding")
                 self.dispatch_on_delegate_queue({
-                    self.membershipAdminDelegate?.browserFindingPeer?(isNew: true)
+                    self.membershipAdminDelegate?.bluepeer?(self, browserFindingPeer: true)
                 })
             }
             
@@ -785,7 +785,7 @@ extension BluepeerObject : HHServiceBrowserDelegate {
                 if peer.resolvedServices().count == 0 && previousResolvedServiceCount > 0 {
                     DLog("didRemoveService - that was the LAST resolved service so calling browserLostPeer for \(peer.displayName)")
                     self.dispatch_on_delegate_queue({
-                        self.membershipAdminDelegate?.browserLostPeer?(peer.role, peer: peer)
+                        self.membershipAdminDelegate?.bluepeer?(self, browserLostPeer: peer.role, peer: peer)
                     })
                 }
             } else {
@@ -799,7 +799,7 @@ extension BluepeerObject : HHServiceDelegate {
     public func serviceDidResolve(_ service: HHService, moreComing: Bool) {
         func cleanup() {
             self.dispatch_on_delegate_queue({
-                self.membershipAdminDelegate?.browserFindingPeerFailed?()
+                self.membershipAdminDelegate?.bluepeer?(self, browserFindingPeerFailed: false)
             })
         }
         
@@ -979,7 +979,7 @@ extension BluepeerObject : HHServiceDelegate {
         if self.appIsInBackground == false {
             DLog("announcePeer: announcing now with browserFoundPeer - call peer.connect() to connect")
             self.dispatch_on_delegate_queue({
-                delegate.browserFoundPeer?(peer.role, peer: peer)
+                delegate.bluepeer?(self, browserFoundPeer: peer.role, peer: peer)
             })
         } else {
             DLog("announcePeer: app is in BACKGROUND, no-op!")
@@ -989,7 +989,7 @@ extension BluepeerObject : HHServiceDelegate {
     public func serviceDidNotResolve(_ service: HHService) {
         DLog("****** ERROR, service did not resolve: \(service.name) *******")
         self.dispatch_on_delegate_queue({
-            self.membershipAdminDelegate?.browserFindingPeerFailed?()
+            self.membershipAdminDelegate?.bluepeer?(self, browserFindingPeerFailed: false)
         })
     }
 }
@@ -1106,7 +1106,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             DLog(" socketDidDisconnect: WARNING expected to find 1 peer with this socket but found \(matchingPeers.count), calling peerConnectionAttemptFailed.")
             sock.synchronouslySetDelegate(nil)
             self.dispatch_on_delegate_queue({
-                self.membershipRosterDelegate?.peerConnectionAttemptFailed?(.unknown, peer: nil, isAuthRejection: false, canConnectNow: false)
+                self.membershipRosterDelegate?.bluepeer?(self, peerConnectionAttemptFailed: .unknown, peer: nil, isAuthRejection: false, canConnectNow: false)
             })
             return
         }
@@ -1123,7 +1123,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
         case .authenticated:
             peer.disconnectCount += 1
             self.dispatch_on_delegate_queue({
-                self.membershipRosterDelegate?.peerDidDisconnect?(peer.role, peer: peer, canConnectNow: self.canConnectNow(peer))
+                self.membershipRosterDelegate?.bluepeer?(self, peerDidDisconnect: peer.role, peer: peer, canConnectNow: self.canConnectNow(peer))
             })
             break
         case .notConnected:
@@ -1134,7 +1134,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
                 peer.connectAttemptFailAuthRejectCount += 1
             }
             self.dispatch_on_delegate_queue({
-                self.membershipRosterDelegate?.peerConnectionAttemptFailed?(peer.role, peer: peer, isAuthRejection: oldState == .awaitingAuth, canConnectNow: self.canConnectNow(peer))
+                self.membershipRosterDelegate?.bluepeer?(self, peerConnectionAttemptFailed: peer.role, peer: peer, isAuthRejection: oldState == .awaitingAuth, canConnectNow: self.canConnectNow(peer))
             })
             break
         }
@@ -1180,7 +1180,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             peer.state = .authenticated // CLIENT becomes authenticated
             peer.connectCount += 1
             self.dispatch_on_delegate_queue({
-                self.membershipRosterDelegate?.peerDidConnect?(peer.role, peer: peer)
+                self.membershipRosterDelegate?.bluepeer?(self, peerDidConnect: peer.role, peer: peer)
             })
             DLog("\(peer.displayName).state=connected (auth OK), readHeaderTerminator1")
             sock.readData(to: self.headerTerminator, withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_HEADER.rawValue)
@@ -1200,7 +1200,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
                 DLog("got header, reading \(length) bytes from \(peer.displayName)...")
                 peer.clientReceivedBytes = 0
                 self.dispatch_on_delegate_queue({
-                    self.dataDelegate?.receivingData?(bytesReceived: 0, totalBytes: Int(length), fromPeer: peer)
+                    self.dataDelegate?.bluepeer?(self, receivingData: 0, totalBytes: Int(length), peer: peer)
                 })
                 sock.readData(toLength: length, withTimeout: Timeouts.body.rawValue, tag: Int(length))
             }
@@ -1243,7 +1243,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             
             if let delegate = self.membershipAdminDelegate {
                 self.dispatch_on_delegate_queue({
-                    delegate.peerConnectionRequest?(peer, invitationHandler: { (inviteAccepted) in
+                    delegate.bluepeer?(self, peerConnectionRequest: peer, invitationHandler: { (inviteAccepted) in
                         if peer.state != .awaitingAuth || sock.isConnected != true {
                             DLog("inviteHandlerBlock: not connected/wrong state, so cannot accept!")
                             if (sock.isConnected) {
@@ -1256,7 +1256,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
                             sock.write(Data.init(count: 1), withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_WRITING.rawValue)
                             DLog("inviteHandlerBlock: accepted \(peer.displayName) (by my delegate), reading header...")
                             self.dispatch_on_delegate_queue({
-                                self.membershipRosterDelegate?.peerDidConnect?(.client, peer: peer)
+                                self.membershipRosterDelegate?.bluepeer?(self, peerDidConnect: .client, peer: peer)
                             })
                             self.scheduleNextKeepaliveTimer(peer) // NEW in 1.1: if the two sides open up a connection but no one says anything, make sure it stays open
                             sock.readData(to: self.headerTerminator, withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_HEADER.rawValue)
@@ -1279,8 +1279,8 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             }
             peer.clientReceivedBytes = 0
             self.dispatch_on_delegate_queue({
-                self.dataDelegate?.receivingData?(bytesReceived: tag, totalBytes: tag, fromPeer: peer)
-                self.dataDelegate?.didReceiveData(data, fromPeer: peer)
+                self.dataDelegate?.bluepeer?(self, receivingData: tag, totalBytes: tag, peer: peer)
+                self.dataDelegate?.bluepeer(self, didReceiveData: data, peer: peer)
             })
             sock.readData(to: self.headerTerminator, withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_HEADER.rawValue)
         }
@@ -1292,7 +1292,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
         guard partialLength > 0 else { return }
         peer.clientReceivedBytes += Int(partialLength)
         self.dispatch_on_delegate_queue({
-            self.dataDelegate?.receivingData?(bytesReceived: peer.clientReceivedBytes, totalBytes: tag, fromPeer: peer)
+            self.dataDelegate?.bluepeer?(self, receivingData: peer.clientReceivedBytes, totalBytes: tag, peer: peer)
         })
     }
     

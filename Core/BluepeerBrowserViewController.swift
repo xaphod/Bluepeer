@@ -133,8 +133,7 @@ import xaphodObjCUtils
 }
 
 extension BluepeerBrowserViewController: BluepeerMembershipRosterDelegate {
-    
-    public func peerDidConnect(_ peerRole: RoleType, peer: BPPeer) {
+    public func bluepeer(_ bluepeerObject: BluepeerObject, peerDidConnect peerRole: RoleType, peer: BPPeer) {
         DispatchQueue.main.async(execute: {
             NSLog("BluepeerBrowserVC: connected, dismissing.")
             self.progressView?.dismiss(withAnimation: false)
@@ -149,7 +148,7 @@ extension BluepeerBrowserViewController: BluepeerMembershipRosterDelegate {
         })
     }
     
-    public func peerConnectionAttemptFailed(_ peerRole: RoleType, peer: BPPeer?, isAuthRejection: Bool, canConnectNow: Bool) {
+    public func bluepeer(_ bluepeerObject: BluepeerObject, peerConnectionAttemptFailed peerRole: RoleType, peer: BPPeer?, isAuthRejection: Bool, canConnectNow: Bool) {
         DispatchQueue.main.async(execute: {
             self.progressView?.dismiss(withAnimation: false)
             self.progressView = nil
@@ -165,8 +164,7 @@ extension BluepeerBrowserViewController: BluepeerMembershipRosterDelegate {
 }
 
 extension BluepeerBrowserViewController: BluepeerMembershipAdminDelegate {
-
-    public func browserFoundPeer(_ role: RoleType, peer: BPPeer) {
+    public func bluepeer(_ bluepeerObject: BluepeerObject, browserFoundPeer role: RoleType, peer: BPPeer) {
         DispatchQueue.main.async(execute: {
             if !self.peers.contains(peer) {
                 self.peers.append(peer)
@@ -175,7 +173,7 @@ extension BluepeerBrowserViewController: BluepeerMembershipAdminDelegate {
         })
     }
     
-    public func browserLostPeer(_ role: RoleType, peer: BPPeer) {
+    public func bluepeer(_ bluepeerObject: BluepeerObject, browserLostPeer role: RoleType, peer: BPPeer) {
         DispatchQueue.main.async(execute: {
             self.progressView?.dismiss(withAnimation: false)
             self.progressView = nil
