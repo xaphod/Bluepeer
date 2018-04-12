@@ -80,9 +80,43 @@ let iOS_wifi_interface = "en0"
 
 @objc open class BPPeer: NSObject {
     @objc open var displayName: String = "" // is same as HHService.name !
-    fileprivate var socket: GCDAsyncSocket?
+    @objc open var displayShortName: String { // doesn't have the "-0923" numbers at the end
+        if displayName.count <= 5 {
+            return displayName
+        }
+        let index = displayName.index(displayName.endIndex, offsetBy: -5)
+        return String(displayName.prefix(upTo: index))
+    }
     @objc open var role: RoleType = .unknown
     @objc open var state: BPPeerState = .notConnected
+    @objc open var canConnect: Bool {
+        return self.candidateAddresses.count > 0
+    }
+    @objc open var keepaliveTimer: Timer?
+    @objc open var lastReceivedData: Date = Date.init(timeIntervalSince1970: 0)
+    @objc open var connect: (()->Bool)? // false if no connection attempt will happen
+    @objc open func disconnect() {
+        DLog("\(displayName): disconnect() called")
+        socket?.disconnect()
+    }
+    @objc open var customData = [String:AnyHashable]() // store your own data here. When a browser finds an advertiser and creates a peer for it, this will be filled out with the advertiser's customData *even before any connection occurs*. Note that while you can store values that are AnyHashable, only Strings are used as values for advertiser->browser connections.
+    weak var owner: BluepeerObject?
+
+    var connectCount=0, disconnectCount=0, connectAttemptFailCount=0, connectAttemptFailAuthRejectCount=0, dataRecvCount=0, dataSendCount=0
+    override open var description: String {
+        var socketDesc = "nil"
+        if let socket = self.socket {
+            if let host = socket.connectedHost {
+                socketDesc = host
+            } else {
+                socketDesc = "NOT connected"
+            }
+        }
+        return "\n[\(displayName) is \(state) as \(role) on \(lastInterfaceName ?? "nil") with \(customData.count) customData keys. C:\(connectCount) D:\(disconnectCount) cFail:\(connectAttemptFailCount) cFailAuth:\(connectAttemptFailAuthRejectCount), Data In#:\(dataRecvCount) InLast: \(lastReceivedData), Out#:\(dataSendCount). Socket: \(socketDesc), services#: \(services.count) (\(resolvedServices().count) resolved)]"
+    }
+
+    // fileprivates
+    fileprivate var socket: GCDAsyncSocket?
     fileprivate var services = [HHService]()
     fileprivate func resolvedServices() -> [HHService] {
         return services.filter { $0.resolved == true }
@@ -98,28 +132,19 @@ let iOS_wifi_interface = "en0"
         }
         services = [HHService]()
     }
-    fileprivate var lastInterfaceName: String?
-    @objc open var keepaliveTimer: Timer?
-    @objc open var lastReceivedData: Date = Date.init(timeIntervalSince1970: 0)
-    @objc open var connect: (()->Void)?
-    @objc open func disconnect() {
-        DLog("\(displayName): disconnect() called")
-        socket?.disconnect()
-    }
-    @objc open var customData = [String:AnyHashable]() // store your own data here. When a browser finds an advertiser and creates a peer for it, this will be filled out with the advertiser's customData *even before any connection occurs*. Note that while you can store values that are AnyHashable, only Strings are used as values for advertiser->browser connections.
-    var connectCount=0, disconnectCount=0, connectAttemptFailCount=0, connectAttemptFailAuthRejectCount=0, dataRecvCount=0, dataSendCount=0
-    fileprivate var clientReceivedBytes: Int = 0
-    override open var description: String {
-        var socketDesc = "nil"
-        if let socket = self.socket {
-            if let host = socket.connectedHost {
-                socketDesc = host
-            } else {
-                socketDesc = "NOT connected"
-            }
+    fileprivate var candidateAddresses: [HHAddressInfo] {
+        guard let hhaddresses2 = self.pickedResolvedService()?.resolvedAddressInfo, hhaddresses2.count > 0 else {
+            return []
         }
-        return "\n[\(displayName) is \(state) as \(role) on \(lastInterfaceName ?? "nil") with \(customData.count) customData keys. C:\(connectCount) D:\(disconnectCount) cFail:\(connectAttemptFailCount) cFailAuth:\(connectAttemptFailAuthRejectCount), Data In#:\(dataRecvCount) InLast: \(lastReceivedData), Out#:\(dataSendCount). Socket: \(socketDesc), services#: \(services.count) (\(resolvedServices().count) resolved)]"
+        var interfaces: BluepeerInterfaces = .any
+        if let owner = self.owner {
+            interfaces = owner.bluepeerInterfaces
+        }
+        return hhaddresses2.filter({ $0.isCandidateAddress(excludeWifi: interfaces == .notWifi, onlyWifi: interfaces == .infrastructureModeWifiOnly) })
     }
+
+    fileprivate var lastInterfaceName: String?
+    fileprivate var clientReceivedBytes: Int = 0
 }
 
 @objc public protocol BluepeerMembershipRosterDelegate {
@@ -745,6 +770,7 @@ extension BluepeerObject : HHServiceBrowserDelegate {
             } else {
                 peer = BPPeer.init()
                 guard let peer = peer else { return }
+                peer.owner = self
                 peer.displayName = service.name
                 peer.services.append(service)
                 self.peers.append(peer)
@@ -913,17 +939,12 @@ extension BluepeerObject : HHServiceDelegate {
         peer.connect = {
             do {
                 // pick the address to connect to INSIDE the block, because more addresses may have been added between announcement and inviteBlock being executed
-                guard let hhaddresses = peer.pickedResolvedService()?.resolvedAddressInfo, hhaddresses.count > 0 else {
-                    DLog("connect: \(peer.displayName) has no resolvedAddresses after invite accepted/rejected, BAILING")
-                    return
+                let candidateAddresses = peer.candidateAddresses
+                guard candidateAddresses.count > 0 else {
+                    DLog("connect: \(peer.displayName) has no candidates, BAILING")
+                    return false
                 }
-                
-                let candidateAddresses = hhaddresses.filter({ $0.isCandidateAddress(excludeWifi: self.bluepeerInterfaces == .notWifi, onlyWifi: self.bluepeerInterfaces == .infrastructureModeWifiOnly) })
-                guard candidateAddresses.count != 0 else {
-                    DLog("connect: \(peer.displayName) has no candidates out of non-zero resolvedAddresses after invite accepted/rejected, BAILING")
-                    return
-                }
-                
+
                 // We have N candidateAddresses from 1 resolved service, which should we pick?
                 // if we tried to connect to one recently and failed, and there's another one, pick the other one
                 var interimAddress: HHAddressInfo?
@@ -950,7 +971,7 @@ extension BluepeerObject : HHServiceDelegate {
                 }
                 
                 peer.lastInterfaceName = chosenAddress.interfaceName
-                DLog("connect: \(peer.displayName) has \(peer.services.count) svcs (\(peer.resolvedServices().count) resolved); picked service has \(hhaddresses.count) addresses, chose \(chosenAddress.addressAndPortString) on interface \(chosenAddress.interfaceName)")
+                DLog("connect: \(peer.displayName) has \(peer.services.count) svcs (\(peer.resolvedServices().count) resolved); chose \(chosenAddress.addressAndPortString) on interface \(chosenAddress.interfaceName)")
                 let sockdata = chosenAddress.socketAsData()
                 
                 if let oldSocket = peer.socket {
@@ -965,9 +986,11 @@ extension BluepeerObject : HHServiceDelegate {
                 peer.state = .connecting
                 try peer.socket?.connect(toAddress: sockdata, withTimeout: 10.0)
 //                try peer.socket?.connect(toAddress: sockdata, viaInterface: chosenAddress.interfaceName, withTimeout: 10.0)
+                return true
             } catch {
                 DLog("could not connect, ERROR: \(error)")
                 peer.state = .notConnected
+                return false
             }
         }
         
@@ -1065,6 +1088,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             }
             newSocket.delegate = self
             let newPeer = BPPeer.init()
+            newPeer.owner = self
             newPeer.state = .awaitingAuth
             newPeer.role = .client
             newPeer.socket = newSocket
@@ -1123,7 +1147,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
         case .authenticated:
             peer.disconnectCount += 1
             self.dispatch_on_delegate_queue({
-                self.membershipRosterDelegate?.bluepeer?(self, peerDidDisconnect: peer.role, peer: peer, canConnectNow: self.canConnectNow(peer))
+                self.membershipRosterDelegate?.bluepeer?(self, peerDidDisconnect: peer.role, peer: peer, canConnectNow: peer.canConnect)
             })
             break
         case .notConnected:
@@ -1134,20 +1158,10 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
                 peer.connectAttemptFailAuthRejectCount += 1
             }
             self.dispatch_on_delegate_queue({
-                self.membershipRosterDelegate?.bluepeer?(self, peerConnectionAttemptFailed: peer.role, peer: peer, isAuthRejection: oldState == .awaitingAuth, canConnectNow: self.canConnectNow(peer))
+                self.membershipRosterDelegate?.bluepeer?(self, peerConnectionAttemptFailed: peer.role, peer: peer, isAuthRejection: oldState == .awaitingAuth, canConnectNow: peer.canConnect)
             })
             break
         }
-    }
-    
-    fileprivate func canConnectNow(_ peer: BPPeer) -> Bool {
-        // is it still valid to call connect() on this peer?
-        if let lastService = peer.pickedResolvedService(),
-            let hhaddresses = lastService.resolvedAddressInfo,
-            hhaddresses.count > 0 {
-            return true
-        }
-        return false
     }
     
     fileprivate func disconnectSocket(socket: GCDAsyncSocket?, peer: BPPeer) {
