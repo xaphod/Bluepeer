@@ -94,7 +94,8 @@ let iOS_wifi_interface = "en0"
     }
     @objc open var keepaliveTimer: Timer?
     @objc open var lastReceivedData: Date = Date.init(timeIntervalSince1970: 0)
-    @objc open var connect: (()->Bool)? // false if no connection attempt will happen
+    public typealias ConnectBlock = ()->Bool
+    @objc open var connect: (ConnectBlock)? // false if no connection attempt will happen
     @objc open func disconnect() {
         DLog("\(displayName): disconnect() called")
         socket?.disconnect()
