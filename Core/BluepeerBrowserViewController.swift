@@ -111,7 +111,7 @@ import xaphodObjCUtils
         self.timer = Timer.scheduledTimer(timeInterval: 60.0, target: self, selector: #selector(timerFired), userInfo: nil, repeats: false)
         
         let peer = self.peers[(indexPath as NSIndexPath).row]
-        peer.connect?()
+        let _ = peer.connect?()
     }
     
     @IBAction func cancelPressed(_ sender: AnyObject) {
