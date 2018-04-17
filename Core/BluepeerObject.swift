@@ -93,7 +93,9 @@ let iOS_wifi_interface = "en0"
         return self.candidateAddresses.count > 0
     }
     @objc open var keepaliveTimer: Timer?
-    @objc open var lastReceivedData: Date = Date.init(timeIntervalSince1970: 0)
+    @objc open var lastDataRead: Date = Date.init(timeIntervalSince1970: 0) // includes keepalives
+    @objc open var lastDataKeepAliveWritten: Date = Date.init(timeIntervalSince1970: 0) // only keepalives
+    @objc open var lastDataNonKeepAliveWritten: Date = Date.init(timeIntervalSince1970: 0) // no keepalives
     public typealias ConnectBlock = ()->Bool
     @objc open var connect: (ConnectBlock)? // false if no connection attempt will happen
     @objc open func disconnect() {
@@ -113,7 +115,8 @@ let iOS_wifi_interface = "en0"
                 socketDesc = "NOT connected"
             }
         }
-        return "\n[\(displayName) is \(state) as \(role) on \(lastInterfaceName ?? "nil") with \(customData.count) customData keys. C:\(connectCount) D:\(disconnectCount) cFail:\(connectAttemptFailCount) cFailAuth:\(connectAttemptFailAuthRejectCount), Data In#:\(dataRecvCount) InLast: \(lastReceivedData), Out#:\(dataSendCount). Socket: \(socketDesc), services#: \(services.count) (\(resolvedServices().count) resolved)]"
+        let lastDataWritten = max(self.lastDataNonKeepAliveWritten, self.lastDataKeepAliveWritten) // the most recent
+        return "\n[\(displayName) is \(state) as \(role) on \(lastInterfaceName ?? "nil") with \(customData.count) customData keys. C:\(connectCount) D:\(disconnectCount) cFail:\(connectAttemptFailCount) cFailAuth:\(connectAttemptFailAuthRejectCount), Data In#:\(dataRecvCount) LastRecv: \(lastDataRead), LastWrite: \(lastDataWritten), Out#:\(dataSendCount). Socket: \(socketDesc), services#: \(services.count) (\(resolvedServices().count) resolved)]"
     }
 
     // fileprivates
@@ -635,7 +638,6 @@ func DLog(_ items: CustomStringConvertible...) {
                 return
             }
 
-            peer.lastReceivedData = Date.init()
             peer.dataRecvCount += 1
             if peer.dataRecvCount + 1 == Int.max {
                 peer.dataRecvCount = 0
@@ -666,12 +668,21 @@ func DLog(_ items: CustomStringConvertible...) {
             DLog("keepAlive timer finds peer isn't authenticated(connected), invalidating timer")
             timer.invalidate()
             peer.keepaliveTimer = nil
-        } else {
-            var senddata = NSData.init(data: self.keepAliveHeader) as Data
-            senddata.append(self.headerTerminator)
-            DLog("writeKeepAlive to \(peer.displayName)")
-            peer.socket?.write(senddata, withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_WRITING.rawValue)
+            return
         }
+        
+        // New in 1.4.0: send keepalives OR real data sends, not both at same time
+        assert(Thread.current.isMainThread) // only touching lastDataReadOrWritten on main thread
+        let timeKeepAlives = abs(peer.lastDataKeepAliveWritten.timeIntervalSinceNow)
+        let timeNotKeepAlives = abs(peer.lastDataNonKeepAliveWritten.timeIntervalSinceNow)
+        guard min(timeKeepAlives, timeNotKeepAlives) > Timeouts.keepAlive.rawValue / 2.0 else {
+            DLog("keepAlive timer no-op as data was recently sent")
+            return
+        }
+        var senddata = NSData.init(data: self.keepAliveHeader) as Data
+        senddata.append(self.headerTerminator)
+        DLog("writeKeepAlive to \(peer.displayName)")
+        peer.socket?.write(senddata, withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_WRITING.rawValue)
     }
     
     func killAllKeepaliveTimers() {
@@ -1178,6 +1189,9 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             return
         }
         self.scheduleNextKeepaliveTimer(peer)
+        DispatchQueue.main.async {
+            peer.lastDataRead = Date.init()
+        }
 
         if tag == DataTag.tag_AUTH.rawValue {
             if data.count != 1 {
@@ -1304,11 +1318,36 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
     public func socket(_ sock: GCDAsyncSocket, didReadPartialDataOfLength partialLength: UInt, tag: Int) {
         guard let peer = sock.peer else { return }
         self.scheduleNextKeepaliveTimer(peer)
+        DispatchQueue.main.async {
+            peer.lastDataRead = Date.init()
+        }
         guard partialLength > 0 else { return }
         peer.clientReceivedBytes += Int(partialLength)
         self.dispatch_on_delegate_queue({
             self.dataDelegate?.bluepeer?(self, receivingData: peer.clientReceivedBytes, totalBytes: tag, peer: peer)
         })
+    }
+    
+    private func updateKeepAlivesOnSend(peer: BPPeer, tag: Int) {
+        DispatchQueue.main.async {
+            if tag >= 0 {
+                peer.lastDataNonKeepAliveWritten = Date.init()
+            } else {
+                peer.lastDataKeepAliveWritten = Date.init()
+            }
+        }
+    }
+    
+    // New in 1.4.0: avoid sending keepalives while sending data
+    public func socket(_ sock: GCDAsyncSocket, didWritePartialDataOfLength partialLength: UInt, tag: Int) {
+        guard let peer = sock.peer else { return }
+        updateKeepAlivesOnSend(peer: peer, tag: tag)
+    }
+    
+    // New in 1.4.0: avoid sending keepalives while sending data
+    public func socket(_ sock: GCDAsyncSocket, didWriteDataWithTag tag: Int) {
+        guard let peer = sock.peer else { return }
+        updateKeepAlivesOnSend(peer: peer, tag: tag)
     }
     
     public func socket(_ sock: GCDAsyncSocket, shouldTimeoutReadWithTag tag: Int, elapsed: TimeInterval, bytesDone length: UInt) -> TimeInterval {
@@ -1320,17 +1359,29 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             return 0
         }
         
-        let timeSinceLastData = abs(peer.lastReceivedData.timeIntervalSinceNow)
-        if timeSinceLastData > (2.0 * Timeouts.keepAlive.rawValue) {
-            // timeout!
-            DLog("socket timed out waiting for read/write - data last seen \(timeSinceLastData). Tag: \(tag). Disconnecting.")
-            sock.disconnect()
-            return 0
-        } else {
-            // extend
-            DLog("extending socket timeout by \(Timeouts.keepAlive.rawValue)s bc I saw data \(timeSinceLastData)s ago")
+        assert(!Thread.current.isMainThread)
+        // it can happen that while sending lots of data, we don't receive keepalives that the other side is sending.
+        // so if we are sending real data succesfully, don't time out
+        var timeSinceLastDataRead: Double?
+        var timeSinceLastDataWrittenWithoutKeepAlives: Double?
+        DispatchQueue.main.sync {
+            timeSinceLastDataRead = abs(peer.lastDataRead.timeIntervalSinceNow)
+            timeSinceLastDataWrittenWithoutKeepAlives = abs(peer.lastDataNonKeepAliveWritten.timeIntervalSinceNow)
+        }
+        guard let timeSinceRead = timeSinceLastDataRead, let timeSinceWrite = timeSinceLastDataWrittenWithoutKeepAlives else {
+            assert(false)
             return Timeouts.keepAlive.rawValue
         }
+        let timeSince = min(timeSinceRead, timeSinceWrite)
+        if timeSince > (2.0 * Timeouts.keepAlive.rawValue) {
+            // timeout!
+            DLog("keepalive: socket timed out waiting for read/write - data last seen \(timeSince). Tag: \(tag). Disconnecting.")
+            sock.disconnect()
+            return 0
+        }
+        // extend
+        DLog("keepalive: extending socket timeout by \(Timeouts.keepAlive.rawValue)s bc I saw data \(timeSince)s ago")
+        return Timeouts.keepAlive.rawValue
     }
 }
 
