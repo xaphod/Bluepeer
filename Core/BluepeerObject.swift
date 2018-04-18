@@ -14,9 +14,6 @@ import dnssd
 import xaphodObjCUtils
 import DataCompression
 
-let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2
-let iOS_wifi_interface = "en0"
-
 // "Any" means can be both a client and a server. If accepting a new connection from another peer, that peer is deemed a client. If found an advertising .any peer, that peer is considered a server.
 @objc public enum RoleType: Int, CustomStringConvertible {
     case unknown = 0
@@ -118,6 +115,12 @@ let iOS_wifi_interface = "en0"
         let lastDataWritten = max(self.lastDataNonKeepAliveWritten, self.lastDataKeepAliveWritten) // the most recent
         return "\n[\(displayName) is \(state) as \(role) on \(lastInterfaceName ?? "nil") with \(customData.count) customData keys. C:\(connectCount) D:\(disconnectCount) cFail:\(connectAttemptFailCount) cFailAuth:\(connectAttemptFailAuthRejectCount), Data In#:\(dataRecvCount) LastRecv: \(lastDataRead), LastWrite: \(lastDataWritten), Out#:\(dataSendCount). Socket: \(socketDesc), services#: \(services.count) (\(resolvedServices().count) resolved)]"
     }
+    @objc open var isConnectedViaWifi: Bool {
+        guard let interface = self.lastInterfaceName else {
+            return false
+        }
+        return interface == BluepeerObject.iOS_wifi_interface
+    }
 
     // fileprivates
     fileprivate var socket: GCDAsyncSocket?
@@ -211,6 +214,8 @@ func DLog(_ items: CustomStringConvertible...) {
 
 
 @objc open class BluepeerObject: NSObject {
+    static let kDNSServiceInterfaceIndexP2PSwift = UInt32.max-2
+    static let iOS_wifi_interface = "en0"
     
     @objc var delegateQueue: DispatchQueue?
     @objc var serverSocket: GCDAsyncSocket?
@@ -799,7 +804,7 @@ extension BluepeerObject : HHServiceBrowserDelegate {
                 service.beginResolve(UInt32(kDNSServiceInterfaceIndexAny), includeP2P: true, addressLookupProtocols: prots)
                 break
             case .notWifi:
-                service.beginResolve(kDNSServiceInterfaceIndexP2PSwift, includeP2P: true, addressLookupProtocols: prots)
+                service.beginResolve(BluepeerObject.kDNSServiceInterfaceIndexP2PSwift, includeP2P: true, addressLookupProtocols: prots)
                 break
             case .infrastructureModeWifiOnly:
                 service.beginResolve(UInt32(kDNSServiceInterfaceIndexAny), includeP2P: false, addressLookupProtocols: prots)
@@ -1043,7 +1048,7 @@ extension HHAddressInfo {
     }
     
     func isWifiInterface() -> Bool {
-        return self.interfaceName == iOS_wifi_interface
+        return self.interfaceName == BluepeerObject.iOS_wifi_interface
     }
     
     func socketAsData() -> Data {
