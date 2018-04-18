@@ -259,6 +259,7 @@ func DLog(_ items: CustomStringConvertible...) {
         case tag_WRITING = -3
         case tag_AUTH = -4
         case tag_NAME = -5
+        case tag_WRITINGKEEPALIVE = -6 // new in 1.4.0
     }
     
     enum Timeouts: Double {
@@ -672,17 +673,17 @@ func DLog(_ items: CustomStringConvertible...) {
         }
         
         // New in 1.4.0: send keepalives OR real data sends, not both at same time
-        assert(Thread.current.isMainThread) // only touching lastDataReadOrWritten on main thread
         let timeKeepAlives = abs(peer.lastDataKeepAliveWritten.timeIntervalSinceNow)
         let timeNotKeepAlives = abs(peer.lastDataNonKeepAliveWritten.timeIntervalSinceNow)
-        guard min(timeKeepAlives, timeNotKeepAlives) > Timeouts.keepAlive.rawValue / 2.0 else {
-            DLog("keepAlive timer no-op as data was recently sent")
+        assert(Thread.current.isMainThread)
+        guard timeNotKeepAlives > Timeouts.keepAlive.rawValue / 2.0 else {
+            DLog("keepAlive timer no-op as data was recently sent: timeKeepAlive=\(timeKeepAlives), timeNotKeepAlive=\(timeNotKeepAlives)")
             return
         }
         var senddata = NSData.init(data: self.keepAliveHeader) as Data
         senddata.append(self.headerTerminator)
         DLog("writeKeepAlive to \(peer.displayName)")
-        peer.socket?.write(senddata, withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_WRITING.rawValue)
+        peer.socket?.write(senddata, withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_WRITINGKEEPALIVE.rawValue)
     }
     
     func killAllKeepaliveTimers() {
@@ -1330,10 +1331,10 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
     
     private func updateKeepAlivesOnSend(peer: BPPeer, tag: Int) {
         DispatchQueue.main.async {
-            if tag >= 0 {
-                peer.lastDataNonKeepAliveWritten = Date.init()
-            } else {
+            if tag == DataTag.tag_WRITINGKEEPALIVE.rawValue {
                 peer.lastDataKeepAliveWritten = Date.init()
+            } else {
+                peer.lastDataNonKeepAliveWritten = Date.init()
             }
         }
     }
@@ -1375,7 +1376,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
         let timeSince = min(timeSinceRead, timeSinceWrite)
         if timeSince > (2.0 * Timeouts.keepAlive.rawValue) {
             // timeout!
-            DLog("keepalive: socket timed out waiting for read/write - data last seen \(timeSince). Tag: \(tag). Disconnecting.")
+            DLog("keepalive: socket timed out waiting for read/write. timeSinceRead: \(timeSinceRead), timeSinceWrite: \(timeSinceWrite). Tag: \(tag). Disconnecting.")
             sock.disconnect()
             return 0
         }
