@@ -11,8 +11,7 @@ Bluepeer was written because Apple's Multipeer has a severe negative impact on w
 
 Bluepeer is written in Swift, uses only publicly-accessible Apple APIs, and **is published in several apps on the Apple App Store** including [WiFi Booth](http://thewifibooth.com) and [BluePrint](https://thewifibooth.com/blueprint/). Bluepeer wouldn't have been possible without [HHServices](https://github.com/tolo/HHServices) by **tolo** -- many thanks Tobias!
 
-### UPDATED FOR XCODE 8 / SWIFT 3.0
-In mid-september 2016 this was updated to Swift 3.0. You can roll back to older version 1.0.11 if you can't consume Swift 3.0 in your project yet. Please note that the code snippets below in this file have not been updated.
+## Please note this README / documentation is very out of date. Your best bet is to read thru BluepeerObject.swift and pay attention to the comments. I hope to publish a sample app soon that shows how to use it.
 
 As of iOS 10.0, it appears that Apple's Multipeer is broken unless wifi is on - ie. Bluetooth doesn't work. Bluepeer was updated for iOS 10 because it appears that iOS 10 blocks IPv4 advertising over Bluetooth (at least, while IPv6 is available). As a result, IPv6 addresses are now preferred for iOS versions >= 10.
 
