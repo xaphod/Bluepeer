@@ -1359,6 +1359,9 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
     public func socket(_ sock: GCDAsyncSocket, shouldTimeoutReadWithTag tag: Int, elapsed: TimeInterval, bytesDone length: UInt) -> TimeInterval {
         return self.calcTimeExtension(sock, tag: tag)
     }
+    public func socket(_ sock: GCDAsyncSocket, shouldTimeoutWriteWithTag tag: Int, elapsed: TimeInterval, bytesDone length: UInt) -> TimeInterval {
+        return self.calcTimeExtension(sock, tag: tag)
+    }
     
     public func calcTimeExtension(_ sock: GCDAsyncSocket, tag: Int) -> TimeInterval {
         guard let peer = sock.peer else {
