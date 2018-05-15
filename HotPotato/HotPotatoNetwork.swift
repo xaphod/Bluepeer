@@ -325,7 +325,7 @@ open class HotPotatoNetwork: CustomStringConvertible {
         }
         if remoteIDInt > Int64(self.deviceIdentifier.hashValue) {
             self.logDelegate?.logString("HPN: remote ID(\(remoteIDInt)) bigger than mine(\(self.deviceIdentifier.hashValue)), initiating connection...")
-            peer.connect!()
+            let _ = peer.connect!()
         } else {
             self.logDelegate?.logString("HPN: remote ID(\(remoteIDInt)) smaller than mine(\(self.deviceIdentifier.hashValue)), no-op.")
         }
@@ -811,34 +811,21 @@ open class HotPotatoNetwork: CustomStringConvertible {
 }
 
 extension HotPotatoNetwork : BluepeerMembershipAdminDelegate {
-    public func browserFoundPeer(_ role: RoleType, peer: BPPeer) {
-        self.connectToPeer(peer)
-    }
-
-    public func peerConnectionRequest(_ peer: BPPeer, invitationHandler: @escaping (Bool) -> Void) {
+    public func bluepeer(_ bluepeerObject: BluepeerObject, peerConnectionRequest peer: BPPeer, invitationHandler: @escaping (Bool) -> Void) {
         if self.connectionAllowedFrom(peer: peer) == false {
             invitationHandler(false)
         } else {
             invitationHandler(true)
         }
     }
+    
+    public func bluepeer(_ bluepeerObject: BluepeerObject, browserFoundPeer role: RoleType, peer: BPPeer) {
+        self.connectToPeer(peer)
+    }
 }
 
 extension HotPotatoNetwork : BluepeerMembershipRosterDelegate {
-    public func peerConnectionAttemptFailed(_ peerRole: RoleType, peer: BPPeer?, isAuthRejection: Bool, canConnectNow: Bool) {
-        self.logDelegate?.logString("HPN: peerConnectionAttemptFailed for \(String(describing: peer?.displayName))!")
-        if (isAuthRejection) {
-            self.logDelegate?.logString("HPN: peerConnectionAttemptFailed, AuthRejection!")
-        }
-        if let peer = peer, canConnectNow == true {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 4.0, execute: { // otherwise it eats 100% CPU when looping fast
-                self.logDelegate?.logString("HPN: peerConnectionAttemptFailed, canConnectNow - reconnecting...")
-                self.connectToPeer(peer)
-            })
-        }
-    }
-    
-    public func peerDidConnect(_ peerRole: RoleType, peer: BPPeer) {
+    public func bluepeer(_ bluepeerObject: BluepeerObject, peerDidConnect peerRole: RoleType, peer: BPPeer) {
         if let block = self.onConnectUnpauseBlock {
             if block() { // send unpause message
                 self.onConnectUnpauseBlock = nil
@@ -850,18 +837,30 @@ extension HotPotatoNetwork : BluepeerMembershipRosterDelegate {
         self.stateDelegate?.didChangeRoster()
     }
     
-    public func peerDidDisconnect(_ peerRole: RoleType, peer: BPPeer, canConnectNow: Bool) {
+    public func bluepeer(_ bluepeerObject: BluepeerObject, peerDidDisconnect peerRole: RoleType, peer: BPPeer, canConnectNow: Bool) {
         self.stateDelegate?.didChangeRoster()
         if canConnectNow {
             self.logDelegate?.logString("HPN: peerDidDisconnect, canConnectNow - reconnecting...")
             self.connectToPeer(peer)
         }
     }
+    
+    public func bluepeer(_ bluepeerObject: BluepeerObject, peerConnectionAttemptFailed peerRole: RoleType, peer: BPPeer?, isAuthRejection: Bool, canConnectNow: Bool) {
+        self.logDelegate?.logString("HPN: peerConnectionAttemptFailed for \(String(describing: peer?.displayName))!")
+        if (isAuthRejection) {
+            self.logDelegate?.logString("HPN: peerConnectionAttemptFailed, AuthRejection!")
+        }
+        if let peer = peer, canConnectNow == true {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4.0, execute: { // otherwise it eats 100% CPU when looping fast
+                self.logDelegate?.logString("HPN: peerConnectionAttemptFailed, canConnectNow - reconnecting...")
+                self.connectToPeer(peer)
+            })
+        }
+    }
 }
 
 extension HotPotatoNetwork : BluepeerDataDelegate {
-    public func didReceiveData(_ data: Data, fromPeer peer: BPPeer) {
-        
+    public func bluepeer(_ bluepeerObject: BluepeerObject, didReceiveData data: Data, peer: BPPeer) {
         if state != .buildup && self.livePeerNames[peer.displayName] == nil {
             assert(false, "should not be possible")
             self.logDelegate?.logString("HPN didReceiveData: **** received data from someone not in livePeer list, IGNORING")
