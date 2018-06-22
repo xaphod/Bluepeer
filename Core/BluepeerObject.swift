@@ -1100,7 +1100,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
     public func socket(_ sock: GCDAsyncSocket, didAcceptNewSocket newSocket: GCDAsyncSocket) {
         
         if self.membershipAdminDelegate != nil {
-            guard let connectedHost = newSocket.connectedHost else {
+            guard let connectedHost = newSocket.connectedHost, let localhost = newSocket.localHost else {
                 DLog("ERROR, accepted newSocket has no connectedHost (no-op)")
                 return
             }
@@ -1110,7 +1110,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             newPeer.state = .awaitingAuth
             newPeer.role = .client
             newPeer.socket = newSocket
-            newPeer.lastInterfaceName = XaphodUtils.interfaceName(ofLocalIpAddress: newSocket.localHost!)
+            newPeer.lastInterfaceName = XaphodUtils.interfaceName(ofLocalIpAddress: localhost)
             
             self.peers.append(newPeer) // always add as a new peer, even if it already exists. This might result in a dupe if we are browsing and advertising for same service. The original will get removed on receiving the name of other device, if it matches
             DLog("accepting new connection from \(connectedHost) on \(String(describing: newPeer.lastInterfaceName)). Peers(n=\(self.peers.count)) after adding")
