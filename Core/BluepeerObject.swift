@@ -255,7 +255,7 @@ func DLog(_ items: CustomStringConvertible...) {
     /// LZFSE : Apples proprietary compression algorithm. Claims to compress as good as ZLIB but 2 to 3 times faster.
     /// LZMA  : Horribly slow. Compression as well as decompression. Normally you will regret choosing LZMA.
     /// LZ4   : Fast, but depending on the data the compression rate can be really bad. Which is often the case.
-    open var compressionAlgorithm: Data.CompressionAlgorithm? = .LZFSE
+    open var compressionAlgorithm: Data.CompressionAlgorithm? = .lzfse
     @objc open func turnOffCompression() { self.compressionAlgorithm = nil }
     
     enum DataTag: Int {
