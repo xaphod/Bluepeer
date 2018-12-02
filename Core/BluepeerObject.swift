@@ -1223,7 +1223,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
         } else if tag == DataTag.tag_HEADER.rawValue {
             // first, strip the trailing headerTerminator
             let range = 0..<data.count-self.headerTerminator.count
-            let dataWithoutTerminator = data.subdata(in: Range(range))
+            let dataWithoutTerminator = data.subdata(in: range)
             if dataWithoutTerminator == self.keepAliveHeader {
                 DLog("readKeepAlive from \(peer.displayName)")
                 sock.readData(to: self.headerTerminator, withTimeout: Timeouts.header.rawValue, tag: DataTag.tag_HEADER.rawValue)
