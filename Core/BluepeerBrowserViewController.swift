@@ -180,7 +180,7 @@ extension BluepeerBrowserViewController: BluepeerMembershipAdminDelegate {
             self.lastTimerStarted = nil
             self.timer?.invalidate()
             self.timer = nil
-            if let index = self.peers.index(where: {$0 == peer}) {
+            if let index = self.peers.firstIndex(where: {$0 == peer}) {
                 self.peers.remove(at: index)
                 self.tableView.reloadData()
             }

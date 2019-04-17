@@ -821,7 +821,7 @@ extension BluepeerObject : HHServiceBrowserDelegate {
         }
         for peer in matchingPeers {
             // if found exact service, then nil it out to prevent more connection attempts
-            if let serviceIndex = peer.services.index(of: service) {
+            if let serviceIndex = peer.services.firstIndex(of: service) {
                 let previousResolvedServiceCount = peer.resolvedServices().count
                 DLog("didRemoveService - REMOVING SERVICE from \(peer.displayName)")
                 peer.services.remove(at: serviceIndex)
@@ -941,7 +941,7 @@ extension BluepeerObject : HHServiceDelegate {
                     self.browsingWorkaroundRestarts += 1
                     DLog(" *** workaround for BT radio connection delay: restarting browsing, \(self.browsingWorkaroundRestarts) of 3")
                     self.stopBrowsing()
-                    if let indexOfPeer = self.peers.index(of: peer) {
+                    if let indexOfPeer = self.peers.firstIndex(of: peer) {
                         self.peers.remove(at: indexOfPeer)
                     }
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
@@ -1251,7 +1251,7 @@ extension BluepeerObject : GCDAsyncSocketDelegate {
             
             // we're the server. If we are advertising and browsing for the same serviceType, there might be a duplicate peer situation to take care of -- one created by browsing, one when socket was accepted. Remedy: kill old one, keep this one
             for existingPeer in self.peers.filter({ $0.displayName == peer.displayName && $0 != peer }) {
-                let indexOfPeer = self.peers.index(of: existingPeer)!
+                let indexOfPeer = self.peers.firstIndex(of: existingPeer)!
                 DLog("about to remove dupe peer \(existingPeer.displayName) from index \(indexOfPeer), had socket: \(existingPeer.socket != nil ? "ACTIVE" : "nil"). Peers(n=\(self.peers.count)) before removal")
                 peer.connectAttemptFailCount += existingPeer.connectAttemptFailCount
                 peer.connectAttemptFailAuthRejectCount += existingPeer.connectAttemptFailAuthRejectCount
