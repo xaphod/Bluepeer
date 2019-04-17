@@ -31,7 +31,7 @@ Pod::Spec.new do |s|
     core.dependency 'CocoaAsyncSocket', '>= 7.4.0'
     core.dependency 'HHServices', '>= 2.0'
     core.dependency 'xaphodObjCUtils', '>= 0.0.6'
-    core.dependency 'DataCompression', '>= 2.0.0'
+    core.dependency 'DataCompression', '< 4.0.0'
   end
 
   s.subspec 'HotPotatoNetwork' do |hpn|
