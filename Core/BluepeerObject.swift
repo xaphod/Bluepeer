@@ -484,12 +484,11 @@ func DLog(_ items: CustomStringConvertible...) {
     
     @objc open func stopAdvertising(leaveServerSocketAlone: Bool = false) {
         if let _ = self.advertisingRole {
-            guard let publisher = self.publisher else {
-                DLog("publisher is MIA while advertising set true! ERROR. Setting advertising=false")
-                self.advertisingRole = nil
-                return
+            if let publisher = self.publisher {
+                publisher.endPublish()
+            } else {
+                dlog("WARNING: publisher is MIA while advertising set true!")
             }
-            publisher.endPublish()
             DLog("advertising stopped")
         } else {
             DLog("no advertising to stop (no-op)")
