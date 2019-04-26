@@ -254,27 +254,28 @@ import DataCompression
     fileprivate var fileLogDelegate: BluepeerLoggingDelegate?
     
     func dlog(_ items: CustomStringConvertible...) {
-        if let del = fileLogDelegate {
-            var str = ""
-            for item in items {
-                str += item.description
-            }
+        var willLog = false
+        #if DEBUG
+        willLog = true
+        #endif
+        if let _ = fileLogDelegate {
+            willLog = true
+        }
+        guard willLog else { return }
 
-            let serviceType = self.serviceType.replacingOccurrences(of: "_xd-", with: "").replacingOccurrences(of: "._tcp", with: "")
+        var str = ""
+        for item in items {
+            str += item.description
+        }
+        let serviceType = self.serviceType.replacingOccurrences(of: "_xd-", with: "").replacingOccurrences(of: "._tcp", with: "")
+        
+        if let del = fileLogDelegate {
             del.logString("Bluepeer \(serviceType) " + str)
         } else {
-            #if DEBUG
-            var str = ""
-            for item in items {
-                str += item.description
-            }
-
-            let serviceType = self.serviceType.replacingOccurrences(of: "_xd-", with: "").replacingOccurrences(of: "._tcp", with: "")
             let formatter = DateFormatter.init()
             formatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSSS"
-            let out = "Bluepeer \(serviceType) " + formatter.string(from: Date.init()) + " - " + str
+            let out = formatter.string(from: Date.init()) + " - Bluepeer \(serviceType) - " + str
             print(out)
-            #endif
         }
     }
     
