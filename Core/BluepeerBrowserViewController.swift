@@ -32,6 +32,9 @@ import xaphodObjCUtils
     
     override open func viewDidLoad() {
         super.viewDidLoad()
+        if #available(iOS 13.0, *) {
+            self.isModalInPresentation = true
+        }
         self.setNeedsStatusBarAppearanceUpdate()
         guard let bo = bluepeerObject else {
             assert(false, "ERROR: set bluepeerObject before loading view")
