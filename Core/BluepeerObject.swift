@@ -284,6 +284,10 @@ import DataCompression
         
         super.init()
         fileLogDelegate = logDelegate
+        
+        if #available(iOS 13.1, *) {
+            dlog("CBManager.authorization = \(CBManager.authorization.debugDescription)")
+        }
 
         // serviceType must be 1-15 chars, only a-z0-9 and hyphen, eg "xd-blueprint"
         if serviceType.count > 15 {
@@ -478,8 +482,7 @@ import DataCompression
         }
         
         if !starting {
-            dlog(" ERROR: could not start advertising")
-            assert(false, "ERROR could not start advertising")
+            dlog("ERROR could not start advertising")
             self.publisher = nil
             self.advertisingRole = nil
             return
@@ -1453,6 +1456,19 @@ extension Dictionary {
     mutating func merge(with a: Dictionary) {
         for (k,v) in a {
             self[k] = v
+        }
+    }
+}
+
+@available(iOS 13.0, *)
+extension CBManagerAuthorization : CustomDebugStringConvertible {
+    public var debugDescription: String {
+        switch self {
+        case .allowedAlways: return "allowedAlways"
+        case .denied: return "DENIED"
+        case .notDetermined: return "notDetermined"
+        case .restricted: return "RESTRICTED"
+        default: return "UNKNOWN!"
         }
     }
 }
