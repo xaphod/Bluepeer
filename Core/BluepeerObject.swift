@@ -483,6 +483,7 @@ import DataCompression
         
         if !starting {
             dlog("ERROR could not start advertising")
+            assert(false, "Check Info.plist: add NSBonjourServices and NSLocalNetworkUsageDescription entries if missing")
             self.publisher = nil
             self.advertisingRole = nil
             return
